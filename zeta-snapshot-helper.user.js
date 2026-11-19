@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         제타 짤뽑 도우미
 // @namespace    zeta-snapshot-helper
-// @version      0.3.5
-// @description  원본 메시지 직접 선택 · 유저/캐릭터 프로필 사진 감지 및 미리보기 (개발판)
+// @version      0.4.0
+// @description  1인 스냅샷 프롬프트 생성 · 원본 메시지 선택 · 프로필 감지 (개발판)
 // @author       casualJH
 // @homepageURL  https://github.com/casualJH/zeta-snapshot-helper
 // @updateURL    https://raw.githubusercontent.com/casualJH/zeta-snapshot-helper/main/zeta-snapshot-helper.user.js
@@ -15,11 +15,12 @@
 // ==/UserScript==
 (function () {
   'use strict';
-  const VERSION = '0.3.5';
+  const VERSION = '0.4.0';
   const FRAME_ORIGIN = 'https://frame.pingpong.ai';
   const API_ORIGIN = 'https://api.zeta-ai.io';
   const PROTOCOL = 'zeta-snapshot-helper:selection:v1';
   const UI_KEY = 'zeta-snapshot-helper:ui:v1';
+  const SOLO_SNAPSHOT_TEMPLATE = "[1인 스냅샷 생성 프롬프트]\n\n{{CHAT_BLOCK}}{{USER_INPUT}}\n\n인물의 이미지 URL: {{IMAGE_URL}}\n\n첨부한 인물의 이미지를 참고하여, 동일한 그림체와 외형을 유지한 새로운 1인 스냅샷 일러스트를 생성한다.\n\n1. 인물 및 그림체 유지 (최우선)\n\n- 첨부 사진 속 인물의 얼굴형, 이목구비, 눈매, 코, 입술, 턱선, 헤어스타일, 머리색과 고유한 분위기를 최대한 정확하게 재현한다.\n- 원본 특유의 그림체, 선화, 채색 방식, 명암, 피부와 머리카락의 표현을 일관되게 유지한다.\n- 얼굴의 고유한 특징과 인상을 유지하여 어떤 각도에서도 동일인물로 인식되도록 한다.\n- 임의로 미화하거나 실사화하지 않으며, 다른 화풍으로 재해석하지 않는다.\n- 원본에 없는 문신, 피어싱, 흉터 등 외형적 특징을 임의로 추가하지 않는다.\n- 인물의 기존 성별, 체격, 신체 비율과 분위기를 자연스럽게 유지한다.\n\n2. 구도 및 자세 독립 생성 (매우 중요)\n\n- 첨부 사진은 인물의 외형과 그림체를 참고하기 위한 자료이며, 기존 얼굴 각도나 구도를 복제하기 위한 자료가 아니다.\n- 원본 사진의 얼굴 방향, 고개 각도, 시선, 표정, 자세와 카메라 구도를 그대로 가져다 쓰지 않는다.\n- 새로운 장면에 어울리는 얼굴 각도와 신체 방향을 독자적으로 구성한다.\n- 정면, 측면, 3/4 측면, 고개를 살짝 돌린 모습 등 자연스러운 각도를 상황에 맞게 자유롭게 활용한다.\n- 매번 정면을 바라보거나 동일한 표정과 자세를 반복하는 단조로운 구도를 피한다.\n- 자연스러운 원근감과 인체 비율을 유지하고, 인물의 키와 체격을 정확하게 반영한다.\n- 얼굴 각도가 달라지더라도 이목구비의 비율과 고유한 인상이 달라지지 않도록 한다.\n\n3. 자연스러운 인물 표현 및 행동\n\n- 인물이 실제로 해당 공간에 존재하는 듯한 자연스러운 장면을 연출한다.\n- 인물의 성격과 상황에 맞춰 시선, 손짓, 자세, 표정과 행동을 독립적으로 구성한다.\n- 반드시 카메라를 바라볼 필요는 없으며, 다른 곳을 응시하거나 특정 행동에 집중하는 모습도 자연스럽게 표현한다.\n- 억지로 포즈를 취하거나 과장된 표정을 짓지 않고, 일상 속 우연히 포착된 순간처럼 표현한다.\n- 인물의 자세와 행동이 주변 환경 및 사물과 자연스럽게 연결되도록 한다.\n- 불필요한 인물이나 신체 부위를 추가하지 않는다.\n\n4. 스냅샷 연출 및 완성도\n\n- 제3자가 자연스럽게 촬영한 듯한 생동감 있는 스냅샷 구도를 사용한다.\n- 장면에 어울리는 카메라 높이, 촬영 거리, 원근감과 프레이밍을 독자적으로 결정한다.\n- 정면 구도에만 집착하지 않고 로우앵글, 하이앵글, 사선 구도, 측면 촬영 등 다양한 시점을 상황에 맞게 활용한다.\n- 인물이 배경과 같은 광원의 영향을 받도록 조명과 그림자를 자연스럽게 통일한다.\n- 손가락 개수, 관절, 팔과 다리의 연결, 신체 비율을 정확하게 표현한다.\n- 높은 일러스트 완성도를 유지하되, 원본 그림체를 훼손할 정도의 과도한 보정은 금지한다.\n- 장면에 적합한 자연스러운 프레이밍을 사용하며, 부자연스러운 신체 절단이나 과도한 클로즈업을 피한다.\n\n5. 최종 핵심 원칙\n\n원본의 얼굴과 그림체는 최대한 정확하게 유지하되, 얼굴 각도·표정·시선·자세·카메라 구도는 새로운 장면에 맞춰 완전히 새롭게 구성한다.\n\n얼굴을 유지한다는 것은 원본의 얼굴 각도를 복사한다는 의미가 아니라, 어떤 각도에서도 동일한 인물로 보이도록 고유한 이목구비와 인상을 재현한다는 의미다.\n\n결과물은 기존 사진의 얼굴이나 신체를 단순히 복사하거나 배경만 교체한 이미지가 아니라, 동일한 캐릭터가 새로운 상황에서 자연스럽게 촬영된 한 장의 독립적인 일러스트여야 한다.";
   const ROOM_PATTERN = /\/rooms\/([0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12})(?:[/?#]|$)/i;
   const ROW_SELECTOR = '[data-index][data-key^="message-MESSAGE-"]';
   const BODY_SELECTOR = '[data-sentry-component="BodyView"]';
@@ -88,6 +89,7 @@
   let profileRefreshBusy = false, lastFrameSnapshot = '', profileEpoch = 0;
   const expandedDescriptions = new Set();
   const scene={mode:'2',solo:'user',pair:0,multiUser:true,multi:new Set(),initialized:false};
+  let includeChat=false, generatedRoom=room;
   const plotIntroductions = new Map();
   const screenDescriptions = new Map();
   let descriptionReadScheduled = false;
@@ -118,6 +120,13 @@
     profileState.source = ''; profileState.updatedAt = 0; lastFrameSnapshot = ''; attemptedPersonas.clear();
     expandedDescriptions.clear(); plotIntroductions.clear(); screenDescriptions.clear();
     scene.pair=0;scene.multiUser=true;scene.multi.clear();scene.initialized=false;
+    includeChat=false;generatedRoom=currentRoom();
+    if(root){
+      const input=root.getElementById('snapshot-user-input'),output=root.getElementById('snapshot-output');
+      if(input)input.value='';
+      if(output)output.value='';
+      updateSnapshotControls();
+    }
     renderProfiles();
   }
   function collectVisibleProfileDescription() {
@@ -329,7 +338,7 @@
     for(const [mode,label] of [['1','1인'],['2','2인'],['multi','다인']]){
       const button=document.createElement('button');button.textContent=label;button.type='button';
       button.setAttribute('aria-pressed',String(scene.mode===mode));
-      button.addEventListener('click',()=>{scene.mode=mode;renderSceneModes();});
+      button.addEventListener('click',()=>{scene.mode=mode;renderSceneModes();updateSnapshotControls();});
       tabs.appendChild(button);
     }
     host.appendChild(tabs);
@@ -341,7 +350,7 @@
       characters.forEach((c,i)=>addOption(select,'char:'+i,c.name||'캐릭터 '+(i+1)));
       if(scene.solo!=='user'&&!characters[Number(scene.solo.split(':')[1])])scene.solo='user';
       select.value=scene.solo;
-      select.addEventListener('change',()=>{scene.solo=select.value;renderSceneModes();});
+      select.addEventListener('change',()=>{scene.solo=select.value;renderSceneModes();updateSnapshotControls();});
       options.appendChild(select);
     }else if(scene.mode==='2'){
       const caption=document.createElement('span');caption.textContent='유저 + 캐릭터 1명';
@@ -385,8 +394,83 @@
       preview.appendChild(line);
     });
     if(!participants.length)preview.appendChild(document.createTextNode('선택된 인물이 없습니다.'));
+    updateSnapshotControls();
   }
 
+
+  function selectedSoloProfile() {
+    if(scene.mode!=='1')return null;
+    if(scene.solo==='user')return {type:'유저',person:profileState.user};
+    const match=/^char:(\d+)$/.exec(scene.solo);
+    if(!match)return null;
+    const person=profileCandidates()[Number(match[1])];
+    return person?{type:'캐릭터',person}:null;
+  }
+  function updateSnapshotControls() {
+    if(!root)return;
+    const gen=root.getElementById('snapshot-generate');
+    const toggle=root.getElementById('snapshot-attach');
+    const copy=root.getElementById('snapshot-copy');
+    const label=root.getElementById('snapshot-attach-info');
+    const output=root.getElementById('snapshot-output');
+    if(!gen||!toggle||!copy||!label||!output)return;
+    const enabled=scene.mode==='1';
+    gen.disabled=!enabled;
+    toggle.disabled=!enabled;
+    toggle.setAttribute('aria-pressed',String(includeChat));
+    toggle.textContent=includeChat?'대화내용 첨부 해제':'대화내용 첨부';
+    copy.disabled=!output.value.trim();
+    const count=loaded.filter(x=>chosen.has(x.id)).length;
+    label.textContent=!enabled?'1인 모드를 선택해 주세요.':
+      includeChat?'선택 메시지 '+count+'개 · 생성 시 대화내용 삽입':'대화내용은 선택적으로 첨부합니다.';
+  }
+  function toggleSnapshotChat() {
+    if(scene.mode!=='1')return;
+    if(!includeChat&&!selectedRaw().trim()) {
+      flash('먼저 대화 말풍선을 선택해 주세요.');
+      return;
+    }
+    includeChat=!includeChat;
+    updateSnapshotControls();
+  }
+  function generateSoloSnapshot() {
+    if(scene.mode!=='1'){
+      flash('1인 모드에서만 생성할 수 있습니다.');return;
+    }
+    const subject=selectedSoloProfile();
+    if(!subject){flash('인물을 먼저 선택해 주세요.');return;}
+    const raw=includeChat?selectedRaw():'';
+    if(includeChat&&!raw.trim()){
+      flash('첨부할 대화를 선택해 주세요.');return;
+    }
+    const chatBlock=raw.trim()
+      ? '다음은 두 캐릭터의 대사와 행동지문이다.\n[대화내용]\n\n'+raw+'\n\n'
+      : '';
+    const userInput=root.getElementById('snapshot-user-input').value;
+    const url=subject.person?.image||'';
+    const result=SOLO_SNAPSHOT_TEMPLATE
+      .replace('{{CHAT_BLOCK}}',chatBlock)
+      .replace('{{USER_INPUT}}',userInput)
+      .replace('{{IMAGE_URL}}',url);
+    root.getElementById('snapshot-output').value=result;
+    generatedRoom=currentRoom();
+    updateSnapshotControls();
+    flash(url?'1인 스냅샷 프롬프트를 생성했습니다.':'이미지 URL이 미확인입니다. 결과에서 직접 입력할 수 있습니다.');
+  }
+  async function copySoloSnapshot() {
+    const field=root.getElementById('snapshot-output');
+    if(!field?.value.trim())return;
+    if(generatedRoom!==currentRoom()){
+      flash('채팅방이 변경되었습니다. 다시 생성해 주세요.');return;
+    }
+    try {
+      await writeText(field.value);
+      flash('프롬프트 전체를 복사했습니다.');
+    } catch(_) {
+      field.focus();field.select();
+      flash('자동 복사를 사용할 수 없습니다. 직접 복사해 주세요.');
+    }
+  }
   async function copyProfileDescription(value) {
     if (!value.trim()) { setInfo('복사할 프로필 설명을 확인하지 못했습니다.'); return; }
     try {
@@ -874,6 +958,7 @@
     rawPreview.value = text;
     root.getElementById('chars').textContent = `${text.length.toLocaleString('ko-KR')}자`;
     selectedSummary.textContent = count ? `선택한 원본 메시지 ${count}개 · 실제 대화 순서로 표시` : '선택한 메시지가 없습니다.';
+    updateSnapshotControls();
     syncFrame();
     renderProfiles();
   }
@@ -1053,6 +1138,12 @@
 #status{white-space:pre-wrap;padding:9px 10px;border:1px solid var(--line);border-radius:9px;background:var(--muted);color:var(--sub);min-height:40px;font-size:12px}
 .stats{display:flex;gap:8px;margin:10px 0}.stat{flex:1;background:var(--muted);border-radius:9px;padding:10px}.stat small{display:block;color:var(--sub)}.stat strong{display:block;font-size:19px}
 #preview{resize:vertical;width:100%;min-height:148px;max-height:430px;white-space:pre-wrap;background:var(--muted);border:1px solid var(--line);color:var(--ink);border-radius:9px;padding:10px;font:12px/1.6 ui-monospace,SFMono-Regular,monospace}
+#snapshot-user-input,#snapshot-output{display:block;width:100%;background:var(--muted);color:var(--ink);border:1px solid var(--line);border-radius:9px;resize:vertical;padding:10px;white-space:pre-wrap}
+#snapshot-user-input{min-height:96px;font:12px/1.5 system-ui,-apple-system,sans-serif}
+#snapshot-output{min-height:205px;max-height:550px;font:12px/1.5 ui-monospace,SFMono-Regular,monospace}
+#snapshot-attach[aria-pressed="true"]{background:var(--accent)!important;border-color:var(--accent)!important;color:var(--accent-ink)!important}
+#snapshot-copy{margin-left:auto}
+
 #summary{font-size:12px;color:var(--sub)}
 #profile-cards{container-type:inline-size;container-name:zsh-profiles;min-width:0}
 .profile-card{
@@ -1116,11 +1207,20 @@
     <h3>장면 인원수</h3>
     <p class="note">1인: 유저 또는 캐릭터 · 2인: 유저 + 캐릭터 1명 · 다인: 제한 없음</p>
     <div id="scene-controls"></div><div id="scene-summary" class="scene-summary" aria-live="polite"></div>
+    <h3>1인 스냅샷 프롬프트</h3>
+    <p class="note">1인 모드에서 인물의 사진 URL이 자동 삽입됩니다. 사용자 입력은 비어 있어도 됩니다.</p>
+    <label for="snapshot-user-input">스냅샷 내용 / 분위기</label>
+    <textarea id="snapshot-user-input" placeholder="예: 카페 창가에 앉아 책을 읽는 장면, 따뜻하고 잔잔한 분위기"></textarea>
+    <div class="row"><button id="snapshot-attach" type="button" aria-pressed="false">대화내용 첨부</button><span id="snapshot-attach-info" class="note" aria-live="polite"></span></div>
+    <div class="row"><button id="snapshot-generate" class="primary" type="button">프롬프트 생성</button></div>
+    <label for="snapshot-output">프롬프트 미리보기 (수정 가능)</label>
+    <textarea id="snapshot-output" placeholder="프롬프트를 생성한 후 직접 수정할 수 있습니다."></textarea>
+    <div class="row"><button id="snapshot-copy" type="button">프롬프트 복사</button></div>
    <h3>선택 대화 원문</h3>
   <p id="summary" aria-live="polite">선택한 메시지가 없습니다.</p>
   <textarea id="preview" readonly placeholder="선택한 원본 메시지가 여기에 표시됩니다."></textarea>
   <div class="row"><span id="chars" class="note">0자</span><button id="copy" type="button">선택 원문 복사</button></div>
-  <p class="note">현재는 0.3.1 개발판입니다. 인원수 선택, 이미지 복사 및 URL 복사가 추가되었습니다. 전용 프롬프트는 추후 제공되는 템플릿에 맞춰 적용합니다.</p>
+  <p class="note">현재는 0.4.0 개발판입니다. 1인 스냅샷 프롬프트 생성 기능을 테스트합니다. 2인·다인 프롬프트는 후속 버전에서 추가됩니다.</p>
   <div class="settings"><h3>설정</h3><label for="size">실행 버튼 크기 <span id="size-val">100%</span></label><input id="size" type="range" min="65" max="155" step="5">
    <label for="btn-label">실행 버튼 표시 (글자·이모지)</label><input id="btn-label" type="text" maxlength="36" placeholder="🖼️">
    <label>테마 &gt; 화면 모드</label><div class="segment" role="group" aria-label="화면 모드"><button type="button" data-theme="light">라이트 모드</button><button type="button" data-theme="dark">다크 모드</button><button type="button" data-theme="system">기기 설정</button></div>
@@ -1158,6 +1258,10 @@
     root.getElementById('start').addEventListener('click', () => selectionMode ? endSelecting() : startSelecting());
     root.getElementById('clear').addEventListener('click', () => { chosen.clear(); render(); });
     root.getElementById('copy').addEventListener('click', copyRaw);
+    root.getElementById('snapshot-attach').addEventListener('click',toggleSnapshotChat);
+    root.getElementById('snapshot-generate').addEventListener('click',generateSoloSnapshot);
+    root.getElementById('snapshot-copy').addEventListener('click',copySoloSnapshot);
+    root.getElementById('snapshot-output').addEventListener('input',updateSnapshotControls);
     root.getElementById('size').addEventListener('input', e => { ui.buttonSize = Number(e.target.value); applyUi(); savePrefs(); });
     root.getElementById('btn-label').addEventListener('input', e => { ui.buttonLabel = e.target.value; applyUi(); savePrefs(); });
     root.querySelectorAll('[data-theme]').forEach(btn => btn.addEventListener('click', () => { ui.theme = btn.dataset.theme; applyUi(); savePrefs(); }));

@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         제타 짤뽑 도우미
 // @namespace    zeta-snapshot-helper
-// @version      0.1.1
-// @description  원본 메시지 단위 말풍선 직접 선택 및 선택 대화 원문 확인 (초기 개발판)
+// @version      0.2.0
+// @description  원본 메시지 직접 선택 · 유저/캐릭터 프로필 사진 감지 및 미리보기 (개발판)
 // @author       casualJH
 // @homepageURL  https://github.com/casualJH/zeta-snapshot-helper
 // @updateURL    https://raw.githubusercontent.com/casualJH/zeta-snapshot-helper/main/zeta-snapshot-helper.user.js
@@ -15,7 +15,7 @@
 // ==/UserScript==
 (function () {
   'use strict';
-  const VERSION = '0.1.1';
+  const VERSION = '0.2.0';
   const FRAME_ORIGIN = 'https://frame.pingpong.ai';
   const API_ORIGIN = 'https://api.zeta-ai.io';
   const PROTOCOL = 'zeta-snapshot-helper:selection:v1';
@@ -84,6 +84,214 @@
   let currentInfo = '대화방을 열고 과거 대화를 불러오세요.';
   let lastText = '', ignoreLauncherClick = false, imagesRequested = false, lastFrame = null, validatedFrame = null;
   const knownRequestHeaders = ['authorization', 'x-client-native-version', 'x-client-type', 'x-client-version', 'x-device-type', 'x-user-language'];
+  const profileState = {room: room, user: null, userStatus: '미확인', characters: [], candidates: [], plotId: null, source: '', updatedAt: 0};
+  let profileRefreshBusy = false, lastFrameSnapshot = '', profileEpoch = 0;
+  const attemptedPersonas = new Set();
+  const IMAGE_KEYS = ['avatarUrl', 'avatar_url', 'profileImageUrl', 'profile_image_url', 'imageUrl', 'image_url', 'thumbnailUrl', 'thumbnail_url'];
+  function cleanImage(value) {
+    if (typeof value !== 'string' || value.length > 2000) return '';
+    if (!/^https?:\/\//i.test(value)) return '';
+    const url = parseUrl(value);
+    return url && ['http:', 'https:'].includes(url.protocol) ? url.href : '';
+  }
+  function personFrom(raw) {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+    const name = ['name', 'displayName', 'display_name', 'nickname', 'title']
+      .map(k => raw[k]).find(v => typeof v === 'string' && v.trim());
+    const id = ['id','uuid','profileId','profile_id','characterId','character_id']
+      .map(k => raw[k]).find(v => typeof v === 'string' || typeof v === 'number');
+    const image = IMAGE_KEYS.map(k => cleanImage(raw[k])).find(Boolean) || '';
+    if (!name && !image) return null;
+    return {id: id == null ? '' : String(id).slice(0, 140),
+      name: typeof name === 'string' ? name.trim().slice(0, 160) : '', image};
+  }
+  function resetProfileState() {
+    profileEpoch++;
+    profileState.room = currentRoom(); profileState.user = null; profileState.userStatus = '미확인';
+    profileState.characters = []; profileState.candidates = []; profileState.plotId = null;
+    profileState.source = ''; profileState.updatedAt = 0; lastFrameSnapshot = ''; attemptedPersonas.clear();
+    renderProfiles();
+  }
+  function observeProfilePayload(path, payload, sourceRoom) {
+    if (!sourceRoom || sourceRoom !== currentRoom() || !payload || typeof payload !== 'object') return;
+    const pathname = String(path).replace(/\/$/, '');
+    if (pathname === `/v1/rooms/${sourceRoom}` && payload.plot && typeof payload.plot === 'object') {
+      const plot = payload.plot;
+      const characters = Array.isArray(plot.characters) ? plot.characters : null;
+      if (characters) {
+        const mapped = characters.map(personFrom).filter(Boolean);
+        // Keep the array as provided by the room's plot; never dedupe by name.
+        profileState.characters = mapped;
+        profileState.plotId = typeof plot.id === 'string' ? plot.id : null;
+        profileState.source = '현재 채팅방 상세 정보';
+        profileState.updatedAt = Date.now();
+        tryAutoPersona(sourceRoom, profileState.plotId);
+      }
+      renderProfiles();
+      return;
+    }
+    const persona = /^\/v1\/plots\/[^/]+\/rooms\/([^/]+)\/user-personas\/(select|selected)$/.exec(pathname);
+    if (persona && persona[1].toLowerCase() === sourceRoom.toLowerCase()) {
+      const item = personFrom(payload);
+      if (item) { profileState.user = {...item, source: '선택된 대화 프로필 API'};
+        profileState.userStatus = item.image ? '확인됨' : '프로필 확인됨 · 사진 없음';
+      } else { profileState.userStatus = '선택 프로필 응답에서 사진 미확인'; }
+      renderProfiles();
+    }
+  }
+  async function tryAutoPersona(sourceRoom, plotId) {
+    if (!plotId || !sourceRoom || !headers?.authorization || profileState.user) return;
+    if (!/^[0-9a-f-]{36}$/i.test(plotId)) return;
+    const key = sourceRoom + '/' + plotId;
+    if (attemptedPersonas.has(key)) return;
+    attemptedPersonas.add(key);
+    try {
+      const url = `${API_ORIGIN}/v1/plots/${plotId}/rooms/${sourceRoom}/user-personas/selected`;
+      const resp = await nativeFetch.call(window, url, {headers:{...headers}, credentials:'include', cache:'no-store'});
+      await readProfileResponse(resp, url, sourceRoom);
+    } catch (_) { /* An unavailable persona endpoint is not a profile detection success. */ }
+  }
+  async function readProfileResponse(response, url, sourceRoom) {
+    if (!response?.ok || !sourceRoom) return;
+    const parsed = parseUrl(url); if (!parsed || parsed.origin !== API_ORIGIN) return;
+    const path = parsed.pathname;
+    if (!(path.replace(/\/$/,'') === `/v1/rooms/${sourceRoom}` ||
+      /^\/v1\/plots\/[^/]+\/rooms\/[^/]+\/user-personas\/(select|selected)\/?$/.test(path))) return;
+    if (Number(response.headers.get('content-length')) > 900000) return;
+    const epoch = profileEpoch;
+    try {
+      const json = await response.clone().json();
+      if (epoch === profileEpoch && currentRoom() === sourceRoom) observeProfilePayload(path, json, sourceRoom);
+    } catch (_) { /* A site response may be empty or not JSON. */ }
+  }
+  function readProfileXhr(xhr, url, sourceRoom) {
+    if (xhr.status < 200 || xhr.status >= 300 || !sourceRoom) return;
+    const parsed = parseUrl(url); if (!parsed || parsed.origin !== API_ORIGIN) return;
+    const path = parsed.pathname;
+    if (!(path.replace(/\/$/,'') === `/v1/rooms/${sourceRoom}` ||
+      /^\/v1\/plots\/[^/]+\/rooms\/[^/]+\/user-personas\/(select|selected)\/?$/.test(path))) return;
+    try {
+      const json = xhr.responseType === 'json' ? xhr.response :
+        (!xhr.responseType || xhr.responseType === 'text') && xhr.responseText.length < 900000 ? JSON.parse(xhr.responseText) : null;
+      observeProfilePayload(path, json, sourceRoom);
+    } catch (_) {}
+  }
+  function acceptFrameProfile(payload) {
+    if (!payload || payload.room !== currentRoom()) return;
+    const sig = JSON.stringify(payload);
+    if (sig === lastFrameSnapshot) return;
+    lastFrameSnapshot = sig;
+    // Only a uniquely identified selected card can confirm the user photo.
+    if (payload.user?.state === 'ok' && cleanImage(payload.user.image)) {
+      profileState.user = {id:payload.user.key || '', name:payload.user.name || '현재 대화 프로필',
+        image: cleanImage(payload.user.image), source:'선택된 대화 프로필 카드'};
+      profileState.userStatus = '확인됨';
+    } else if (!profileState.user) {
+      profileState.userStatus = ({'dialog-closed':'대화 프로필 창을 열면 선택 사진 확인 가능',
+        'list-unavailable':'프로필 목록 불러오는 중', 'selection-unknown':'선택된 프로필을 하나로 식별할 수 없음',
+        'image-unavailable':'선택된 카드의 사진 아직 없음'})[payload.user?.state] || '미확인';
+    }
+    profileState.candidates = Array.isArray(payload.candidates) ? payload.candidates
+      .filter(p => p && typeof p.name === 'string' && cleanImage(p.image))
+      .slice(0, 100).map(p => ({name:p.name.slice(0,160), image:cleanImage(p.image)})) : [];
+    renderProfiles();
+  }
+  function profileCandidates() {
+    const selected = profileState.characters;
+    if (selected.length) return selected.map(c => {
+      const matches = profileState.candidates.filter(p => p.name === c.name);
+      const unambiguousName = selected.filter(person => person.name === c.name).length === 1;
+      const fallback = unambiguousName && matches.length === 1 ? matches[0].image : '';
+      return {...c, image: c.image || fallback};
+    });
+    // No room detail: only show displayed chat avatars as *unverified* candidates.
+    return profileState.candidates.map(c => ({...c, id:'', candidate:true}));
+  }
+  function renderProfiles() {
+    if (!root) return;
+    const holder = root.getElementById('profile-cards');
+    if (!holder) return;
+    root.getElementById('refresh-profiles').disabled = profileRefreshBusy;
+    holder.replaceChildren();
+    const title = root.getElementById('profile-status');
+    const chars = profileCandidates();
+    const status = profileState.source || (chars.length ? '화면 아바타 후보 · 채팅방 정보 미확인' : '아직 감지된 프로필 없음');
+    title.textContent = `${status} · 유저: ${profileState.userStatus} · ${profileState.characters.length ? '캐릭터' : '인물 후보'} ${chars.length}명`;
+    function card(person, role) {
+      const item = document.createElement('div'); item.className = 'profile-card';
+      const thumb = document.createElement('div'); thumb.className = 'profile-thumb';
+      if (person?.image) {
+        const picture = document.createElement('img'); picture.src = person.image;
+        picture.alt = (person.name || role) + ' 프로필 사진'; picture.loading = 'lazy';
+        picture.addEventListener('error', () => { picture.hidden = true; thumb.textContent = '사진 오류'; });
+        thumb.appendChild(picture);
+      } else thumb.textContent = '사진 없음';
+      const body = document.createElement('div'); body.className = 'profile-details';
+      const name = document.createElement('strong'); name.textContent = person?.name || (role === 'user' ? '유저 대화 프로필' : '이름 미확인');
+      const info = document.createElement('small'); info.textContent = role === 'user' ?
+        `유저 · ${person?.source || profileState.userStatus}` :
+        (person.candidate ? '화면 아바타 후보 · 인물 정보 미확인' : `캐릭터 · ${person.image ? '사진 확인됨' : '사진 미확인'}`);
+      body.append(name, info);
+      if (person?.image) {
+        const link = document.createElement('a'); link.textContent = '이미지 보기'; link.href = person.image;
+        link.target = '_blank'; link.rel = 'noopener noreferrer';
+        body.appendChild(link);
+      }
+      item.append(thumb, body); return item;
+    }
+    holder.appendChild(card(profileState.user, 'user'));
+    for (const p of chars) holder.appendChild(card(p, 'character'));
+  }
+  async function refreshProfiles() {
+    roomChanged();
+    const target = currentRoom();
+    if (!target || profileRefreshBusy) return;
+    profileRefreshBusy = true; renderProfiles();
+    const generationAtStart = profileEpoch;
+    let roomResult = '방 정보 미확인', frameResult = 'iframe 미확인';
+    try {
+      if (headers?.authorization) {
+        try {
+          const response = await nativeFetch.call(window, `${API_ORIGIN}/v1/rooms/${target}`, {
+            headers:{...headers}, credentials:'include', cache:'no-store'});
+          if (response.ok) { await readProfileResponse(response, response.url, target); roomResult = '채팅방 정보 조회 완료'; }
+          else roomResult = `채팅방 조회 HTTP ${response.status}`;
+        } catch (_) { roomResult = '채팅방 조회 실패'; }
+      } else roomResult = '대화방을 새로고침해 인증 요청 감지 필요';
+      const frame = chatFrame();
+      if (frame) {
+        let ok = await requestFrame(frame);
+        if (!ok && currentRoom() === target) { await pause(450); ok = await requestFrame(chatFrame()); }
+        if (ok && frame === chatFrame()) {
+          try {
+            const answer = await requestProfileFrame(frame, target);
+            frameResult = answer ? '화면 프로필 조회 완료' : '화면 프로필 정보 없음';
+          } catch (_) { frameResult = '화면 프로필 조회 실패'; }
+        } else { frameResult = 'iframe 연결 미확인'; showAccess(); }
+      } else frameResult = '채팅 iframe 없음';
+      if (target === currentRoom() && generationAtStart === profileEpoch)
+        setInfo(`프로필 새로고침: ${roomResult} · ${frameResult}`);
+    } finally { profileRefreshBusy = false; renderProfiles(); }
+  }
+  async function requestProfileFrame(frame, targetRoom) {
+    const nonce = crypto.randomUUID?.() || String(Math.random());
+    const target = frame.contentWindow;
+    return new Promise(resolve => {
+      const channel = new MessageChannel(); let doneAlready = false;
+      const timer = setTimeout(() => done(null), 1800);
+      function done(data) {
+        if (doneAlready) return;
+        doneAlready = true; clearTimeout(timer); channel.port1.onmessage = null;
+        channel.port1.close();
+        if (frame !== chatFrame() || frame.contentWindow !== target || targetRoom !== currentRoom()) return resolve(null);
+        if (data?.protocol !== PROTOCOL || data?.nonce !== nonce || data?.ok !== true) return resolve(null);
+        acceptFrameProfile({...data.snapshot, room: targetRoom}); resolve(data.snapshot);
+      }
+      channel.port1.onmessage = e => done(e.data);
+      try { target.postMessage({protocol: PROTOCOL, type:'profile-read', nonce, room:targetRoom}, FRAME_ORIGIN, [channel.port2]); }
+      catch (_) { channel.port2.close(); done(null); }
+    });
+  }
 
   function requestUrl(value) {
     if (typeof value === 'string') return value;
@@ -117,7 +325,12 @@
       try {
         capture(requestUrl(input), headerEntries((init && init.headers) || (input && input.headers)));
       } catch (_) {}
-      return nativeFetch.apply(this, arguments);
+      const response = nativeFetch.apply(this, arguments);
+      try {
+        const url = requestUrl(input), sourceRoom = currentRoom();
+        Promise.resolve(response).then(r => readProfileResponse(r, url, sourceRoom), () => {});
+      } catch (_) {}
+      return response;
     };
   }
   const nativeOpen = XMLHttpRequest.prototype.open;
@@ -135,7 +348,11 @@
   };
   XMLHttpRequest.prototype.send = function () {
     const meta = xhrMap.get(this);
-    if (meta) { try { capture(meta.url, meta.entries); } catch (_) {} }
+    if (meta) {
+      try { capture(meta.url, meta.entries); } catch (_) {}
+      const sourceRoom = currentRoom();
+      this.addEventListener('loadend', () => { try { readProfileXhr(this, meta.url, sourceRoom); } catch (_) {} }, {once:true});
+    }
     return nativeSend.apply(this, arguments);
   };
 
@@ -154,6 +371,7 @@
     if (aborter) aborter.abort();
     aborter = null; running = false;
     selectionMode = false; validatedFrame = null; loaded = []; chosen.clear(); totalMessages = 0; pages = 0; complete = false;
+    resetProfileState();
     lastText = ''; currentInfo = room ? '채팅방이 변경되었습니다. 대화를 새로 불러오세요.' : '대화방을 열어 주세요.';
     syncFrame(); render();
   }
@@ -163,7 +381,9 @@
     roomChanged();
     const now = chatFrame();
     if (lastFrame === now) return;
-    lastFrame = now;
+    lastFrame = now; lastFrameSnapshot = '';
+    if (now && currentRoom()) refreshFrameSnapshot(now);
+    else { profileState.candidates = []; renderProfiles(); }
     if (selectionMode && validatedFrame !== now) {
       selectionMode = false; validatedFrame = null;
       setInfo('채팅 iframe이 교체되었습니다. 현재 프레임에 다시 연결한 뒤 선택하세요.');
@@ -324,6 +544,13 @@
       catch (_) { channel.port2.close(); done(false); }
     });
   }
+  async function refreshFrameSnapshot(frame) {
+    const roomAtStart = currentRoom();
+    if (!frame || !roomAtStart) return;
+    const ok = await requestFrame(frame);
+    if (ok && frame === chatFrame() && roomAtStart === currentRoom())
+      await requestProfileFrame(frame, roomAtStart);
+  }
   let probing = false;
   async function startSelecting() {
     roomChanged();
@@ -363,6 +590,11 @@
     if (event.data.type === 'ready') {
       if (selectionMode && validatedFrame === chatFrame()) syncFrame();
       if (accessDialog?.open) requestFrame(chatFrame()).then(ok => { if (ok) closeAccess(); });
+      refreshFrameSnapshot(chatFrame());
+      return;
+    }
+    if (event.data.type === 'profile-snapshot') {
+      if (event.data.room === currentRoom()) acceptFrameProfile(event.data.snapshot);
       return;
     }
     if (event.data.type === 'toggle' && typeof event.data.id === 'string') toggleMessage(event.data.id);
@@ -389,6 +621,7 @@
     root.getElementById('chars').textContent = `${text.length.toLocaleString('ko-KR')}자`;
     selectedSummary.textContent = count ? `선택한 원본 메시지 ${count}개 · 실제 대화 순서로 표시` : '선택한 메시지가 없습니다.';
     syncFrame();
+    renderProfiles();
   }
   async function copyRaw() {
     const text = rawPreview.value;
@@ -563,7 +796,7 @@
 #status{white-space:pre-wrap;padding:9px 10px;border:1px solid var(--line);border-radius:9px;background:var(--muted);color:var(--sub);min-height:40px;font-size:12px}
 .stats{display:flex;gap:8px;margin:10px 0}.stat{flex:1;background:var(--muted);border-radius:9px;padding:10px}.stat small{display:block;color:var(--sub)}.stat strong{display:block;font-size:19px}
 #preview{resize:vertical;width:100%;min-height:148px;max-height:430px;white-space:pre-wrap;background:var(--muted);border:1px solid var(--line);color:var(--ink);border-radius:9px;padding:10px;font:12px/1.6 ui-monospace,SFMono-Regular,monospace}
-#summary{font-size:12px;color:var(--sub)}.note{font-size:11px;color:var(--sub)}.settings{border-top:1px solid var(--line);margin-top:18px;padding-top:8px}.settings label{display:block;margin:9px 0 4px}.settings input[type="text"]{width:100%;padding:7px;border-radius:7px;background:var(--bg);border:1px solid var(--line);color:var(--ink)}.settings input[type="range"]{width:100%;accent-color:var(--accent)}
+#summary{font-size:12px;color:var(--sub)}.profile-card{display:flex;gap:10px;align-items:center;border:1px solid var(--line);border-radius:10px;padding:9px;margin:8px 0;background:var(--muted);min-width:0}.profile-thumb{width:58px;height:58px;min-width:58px;border-radius:9px;background:var(--bg);display:flex;justify-content:center;align-items:center;overflow:hidden;color:var(--sub);text-align:center;font-size:10px}.profile-thumb img{width:100%;height:100%;object-fit:cover}.profile-details{display:flex;flex-direction:column;gap:3px;min-width:0;overflow-wrap:anywhere}.profile-details strong{font-size:12px}.profile-details small{font-size:11px;color:var(--sub)}.profile-details a{font-size:11px;color:var(--accent);text-decoration:underline}.note{font-size:11px;color:var(--sub)}.settings{border-top:1px solid var(--line);margin-top:18px;padding-top:8px}.settings label{display:block;margin:9px 0 4px}.settings input[type="text"]{width:100%;padding:7px;border-radius:7px;background:var(--bg);border:1px solid var(--line);color:var(--ink)}.settings input[type="range"]{width:100%;accent-color:var(--accent)}
 .segment{display:flex;gap:3px;padding:3px;background:var(--muted);border:1px solid var(--line);border-radius:10px}.segment button{flex:1;padding:6px 3px!important;font-size:12px;background:transparent!important;border:0!important;border-radius:8px!important}.segment button[aria-pressed="true"]{background:var(--bg)!important;box-shadow:0 1px 3px #0002}
 #resize{position:absolute;right:3px;bottom:2px;width:30px;height:27px;display:grid;place-items:center;cursor:nwse-resize;touch-action:none;color:var(--sub);font-size:21px;user-select:none}
 #tip{position:fixed;z-index:2147483646;top:calc(env(safe-area-inset-top,0px) + 16px);left:50%;transform:translateX(-50%);border-radius:10px;max-width:min(90vw,420px);padding:9px 13px;background:#263b33;border:1px solid #60c99e;color:#fff;box-shadow:0 4px 12px #0003;text-align:center;pointer-events:none}
@@ -581,11 +814,16 @@
   <h3>말풍선 직접 선택</h3>
   <p class="note">원본 메시지 단위만 선택합니다. 말풍선을 누르면 그 원본 메시지 전체가 선택됩니다. 다시 누르면 해제됩니다.</p>
   <div class="row"><button id="start" class="primary" type="button">말풍선 직접 선택</button><button id="clear" type="button">선택 해제</button></div>
-  <h3>선택 대화 원문</h3>
+  <h3>프로필 사진 자동 감지</h3>
+   <p class="note">현재 채팅방의 유저·캐릭터 사진을 확인합니다. 유저 사진이 미확인이라면 채팅 메뉴에서 [대화 프로필]을 열고 아래 새로고침을 누르세요. 프로필 변경은 수행하지 않습니다.</p>
+   <div class="row"><button id="refresh-profiles" type="button">프로필 새로고침</button></div>
+   <p id="profile-status" class="note" aria-live="polite">아직 감지된 프로필 없음</p>
+   <div id="profile-cards"></div>
+   <h3>선택 대화 원문</h3>
   <p id="summary" aria-live="polite">선택한 메시지가 없습니다.</p>
   <textarea id="preview" readonly placeholder="선택한 원본 메시지가 여기에 표시됩니다."></textarea>
   <div class="row"><span id="chars" class="note">0자</span><button id="copy" type="button">선택 원문 복사</button></div>
-  <p class="note">현재는 0.1.1 개발판입니다. 프로필 사진 감지, 이미지 복사, 1인·2인·다인 전용 프롬프트는 후속 버전에 추가됩니다.</p>
+  <p class="note">현재는 0.2.0 개발판입니다. 이미지 클립보드 복사, 1인·2인·다인 모드 및 프롬프트 생성은 후속 버전에 추가됩니다.</p>
   <div class="settings"><h3>설정</h3><label for="size">실행 버튼 크기 <span id="size-val">100%</span></label><input id="size" type="range" min="65" max="155" step="5">
    <label for="btn-label">실행 버튼 표시 (글자·이모지)</label><input id="btn-label" type="text" maxlength="36" placeholder="🖼️">
    <label>테마 &gt; 화면 모드</label><div class="segment" role="group" aria-label="화면 모드"><button type="button" data-theme="light">라이트 모드</button><button type="button" data-theme="dark">다크 모드</button><button type="button" data-theme="system">기기 설정</button></div>
@@ -618,6 +856,7 @@
     });
     root.getElementById('close').addEventListener('click', () => { panel.hidden = true; });
     root.getElementById('load').addEventListener('click', loadMessages);
+    root.getElementById('refresh-profiles').addEventListener('click', refreshProfiles);
     root.getElementById('stop').addEventListener('click', stopLoad);
     root.getElementById('start').addEventListener('click', () => selectionMode ? endSelecting() : startSelecting());
     root.getElementById('clear').addEventListener('click', () => { chosen.clear(); render(); });
@@ -650,7 +889,49 @@
     } catch (_) { return; }
     if (!/^https:\/\/(?:[a-z0-9-]+\.)?zeta-ai\.io$/i.test(origin)) return;
     let known = new Set(), selected = new Set(), enabled = false;
-    let highlight = null, scheduled = false;
+    let highlight = null, scheduled = false, lastProfileSent = '', activeRoom = '';
+    function selectedUserProfile() {
+      const dialog = document.querySelector('[role="dialog"][aria-label="대화 프로필"]');
+      if (!dialog?.getClientRects().length) return {state:'dialog-closed'};
+      if (!dialog.querySelector('[role="group"][aria-label="My chat profiles"]'))
+        return {state:'list-unavailable'};
+      const matches = [];
+      for (const edit of dialog.querySelectorAll('button[aria-label^="edit-"]')) {
+        const parent = edit.parentElement;
+        if (!parent) continue;
+        const selection = [...parent.children].find(el => el.matches('button:disabled') && el.querySelector('img'));
+        if (selection) matches.push({edit, selection});
+      }
+      if (matches.length !== 1) return {state:'selection-unknown'};
+      const {edit, selection} = matches[0];
+      const image = selection.querySelector('img');
+      const url = cleanImage(image?.currentSrc || (image?.getAttribute('src') ? image.src : ''));
+      return {state:url?'ok':'image-unavailable', key:edit.getAttribute('aria-label') || '', image:url,
+        name:''};
+    }
+    function displayedAvatars() {
+      const byName = new Map();
+      const scope = document.querySelector('[aria-label="Chat messages"]');
+      if (!scope) return [];
+      for (const img of scope.querySelectorAll('img[alt]')) {
+        if (!img.closest(ROW_SELECTOR) || !img.alt.trim()) continue;
+        const image = cleanImage(img.currentSrc || (img.getAttribute('src') ? img.src : ''));
+        if (!image) continue;
+        if (!byName.has(img.alt.trim())) byName.set(img.alt.trim(), new Set());
+        byName.get(img.alt.trim()).add(image);
+      }
+      // A name with multiple distinct photos must not be assigned automatically.
+      return [...byName].filter(([name, images]) => images.size === 1)
+        .slice(0, 100).map(([name, images]) => ({name, image:[...images][0]}));
+    }
+    function takeProfileSnapshot() {return {user:selectedUserProfile(), candidates:displayedAvatars()};}
+    function sendProfileSnapshot() {
+      const snapshot = takeProfileSnapshot(), signature = JSON.stringify(snapshot);
+      if (signature === lastProfileSent) return;
+      lastProfileSent = signature;
+      if (!activeRoom) return;
+      window.parent.postMessage({protocol:PROTOCOL, type:'profile-snapshot', room:activeRoom, snapshot:{...snapshot, room:activeRoom}}, origin);
+    }
     const messageId = row => row.getAttribute('data-key')?.slice('message-'.length) || null;
     function messageElements(row) {
       const slide = row.querySelector('.swiper-slide-active');
@@ -711,24 +992,9 @@
         const port = e.ports[0];
         port.postMessage({protocol: PROTOCOL, nonce: e.data.nonce, ok: true});
         port.close();
-      } else if (e.data.type === 'state') {
-        const next = e.data.state;
-        if (!next || !Array.isArray(next.known) || !Array.isArray(next.chosen)) return;
-        enabled = next.enabled === true;
-        known = new Set(next.known.filter(s => typeof s === 'string'));
-        selected = new Set(next.chosen.filter(s => typeof s === 'string'));
-        schedule();
-      }
-    });
-    function ready() {
-      if (!document.body) return;
-      const observer = new MutationObserver(entries => {
-        if (enabled && entries.some(e => !e.target?.closest?.('#zsh-selected-overlay'))) schedule();
-      });
-      observer.observe(document.body, {childList: true, subtree: true});
-      window.parent.postMessage({protocol: PROTOCOL, type: 'ready'}, origin);
-    }
-    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', ready, {once: true});
-    else ready();
-  }
-})();
+      } else if (e.data.type === 'profile-read') {
+        if (e.ports.length !== 1 || typeof e.data.nonce !== 'string' || typeof e.data.room !== 'string') return;
+        activeRoom = e.data.room;
+        const port = e.ports[0];
+        port.postMessage({protocol:PROTOCOL, nonce:e.data.nonce, ok:true, snapshot:takeProfileSnapshot()});
+        port.close();

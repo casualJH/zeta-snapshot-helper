@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         제타 짤뽑 도우미
 // @namespace    zeta-snapshot-helper
-// @version      0.1.0
+// @version      0.1.1
 // @description  원본 메시지 단위 말풍선 직접 선택 및 선택 대화 원문 확인 (초기 개발판)
 // @author       casualJH
 // @homepageURL  https://github.com/casualJH/zeta-snapshot-helper
@@ -15,7 +15,7 @@
 // ==/UserScript==
 (function () {
   'use strict';
-  const VERSION = '0.1.0';
+  const VERSION = '0.1.1';
   const FRAME_ORIGIN = 'https://frame.pingpong.ai';
   const API_ORIGIN = 'https://api.zeta-ai.io';
   const PROTOCOL = 'zeta-snapshot-helper:selection:v1';
@@ -45,7 +45,7 @@
   window.__zetaSnapshotHelper010 = true;
 
   const defaults = () => ({
-    buttonX: null, buttonY: null, buttonSize: 100, buttonText: '짤뽑', buttonEmoji: '🖼️',
+    buttonX: null, buttonY: null, buttonSize: 100, buttonLabel: '🖼️',
     panelX: null, panelY: null, panelW: 390, panelH: 600, theme: 'system'
   });
   function readPrefs() {
@@ -55,7 +55,17 @@
       const str = typeof GM_getValue === 'function' ? GM_getValue(UI_KEY, '{}') : localStorage.getItem(UI_KEY);
       obj = JSON.parse(str || '{}') || {};
     } catch (_) {}
-    return Object.assign(defaults(), obj);
+    const prefs = Object.assign(defaults(), obj);
+    // Migrate existing separate launcher fields; keep previously customized values.
+    if (!Object.prototype.hasOwnProperty.call(obj, 'buttonLabel')) {
+      const oldText = String(obj.buttonText ?? '짤뽑').trim();
+      const oldEmoji = String(obj.buttonEmoji ?? '🖼️').trim();
+      prefs.buttonLabel = oldText === '짤뽑' && oldEmoji === '🖼️'
+        ? '🖼️' : ([oldEmoji, oldText].filter(Boolean).join(' ') || '🖼️');
+    }
+    delete prefs.buttonText;
+    delete prefs.buttonEmoji;
+    return prefs;
   }
   let ui = readPrefs();
   function savePrefs() {
@@ -410,8 +420,7 @@
     ui.buttonX = clamp(ui.buttonX, 0, Math.max(0, vw - 70));
     ui.buttonY = clamp(ui.buttonY, 0, Math.max(0, vh - 38));
     ui.buttonSize = clamp(Number(ui.buttonSize) || 100, 65, 155);
-    ui.buttonText = String(ui.buttonText || '짤뽑').slice(0, 24);
-    ui.buttonEmoji = String(ui.buttonEmoji || '🖼️').slice(0, 12);
+    ui.buttonLabel = String(ui.buttonLabel ?? '🖼️').slice(0, 36);
     if (!['light', 'dark', 'system'].includes(ui.theme)) ui.theme = 'system';
   }
   function applyUi() {
@@ -420,13 +429,12 @@
     rootHost.setAttribute('data-effective', effectiveMode());
     launch.style.left = `${ui.buttonX}px`; launch.style.top = `${ui.buttonY}px`;
     launch.style.fontSize = `${Math.round(13 * ui.buttonSize / 100)}px`;
-    launch.querySelector('.zsh-text').textContent = `${ui.buttonEmoji} ${ui.buttonText}`;
+    launch.querySelector('.zsh-text').textContent = ui.buttonLabel.trim() || '🖼️';
     panel.style.left = `${ui.panelX}px`; panel.style.top = `${ui.panelY}px`;
     panel.style.width = `${ui.panelW}px`; panel.style.height = `${ui.panelH}px`;
     root.getElementById('size').value = String(ui.buttonSize);
     root.getElementById('size-val').textContent = `${ui.buttonSize}%`;
-    if (document.activeElement !== root.getElementById('btn-label')) root.getElementById('btn-label').value = ui.buttonText;
-    if (document.activeElement !== root.getElementById('btn-emoji')) root.getElementById('btn-emoji').value = ui.buttonEmoji;
+    if (root.activeElement !== root.getElementById('btn-label')) root.getElementById('btn-label').value = ui.buttonLabel;
     root.querySelectorAll('[data-theme]').forEach(btn => {
       const active = btn.dataset.theme === ui.theme;
       btn.setAttribute('aria-pressed', String(active));
@@ -577,10 +585,9 @@
   <p id="summary" aria-live="polite">선택한 메시지가 없습니다.</p>
   <textarea id="preview" readonly placeholder="선택한 원본 메시지가 여기에 표시됩니다."></textarea>
   <div class="row"><span id="chars" class="note">0자</span><button id="copy" type="button">선택 원문 복사</button></div>
-  <p class="note">현재는 0.1.0 개발판입니다. 프로필 사진 감지, 이미지 복사, 1인·2인·다인 전용 프롬프트는 후속 버전에 추가됩니다.</p>
+  <p class="note">현재는 0.1.1 개발판입니다. 프로필 사진 감지, 이미지 복사, 1인·2인·다인 전용 프롬프트는 후속 버전에 추가됩니다.</p>
   <div class="settings"><h3>설정</h3><label for="size">실행 버튼 크기 <span id="size-val">100%</span></label><input id="size" type="range" min="65" max="155" step="5">
-   <label for="btn-label">실행 버튼 글자</label><input id="btn-label" type="text" maxlength="24">
-   <label for="btn-emoji">실행 버튼 이모지</label><input id="btn-emoji" type="text" maxlength="12">
+   <label for="btn-label">실행 버튼 표시 (글자·이모지)</label><input id="btn-label" type="text" maxlength="36" placeholder="🖼️">
    <label>테마 &gt; 화면 모드</label><div class="segment" role="group" aria-label="화면 모드"><button type="button" data-theme="light">라이트 모드</button><button type="button" data-theme="dark">다크 모드</button><button type="button" data-theme="system">기기 설정</button></div>
    <div class="row"><button id="reset" type="button">UI 설정 초기화</button></div>
   </div>
@@ -616,8 +623,7 @@
     root.getElementById('clear').addEventListener('click', () => { chosen.clear(); render(); });
     root.getElementById('copy').addEventListener('click', copyRaw);
     root.getElementById('size').addEventListener('input', e => { ui.buttonSize = Number(e.target.value); applyUi(); savePrefs(); });
-    root.getElementById('btn-label').addEventListener('input', e => { ui.buttonText = e.target.value; applyUi(); savePrefs(); });
-    root.getElementById('btn-emoji').addEventListener('input', e => { ui.buttonEmoji = e.target.value; applyUi(); savePrefs(); });
+    root.getElementById('btn-label').addEventListener('input', e => { ui.buttonLabel = e.target.value; applyUi(); savePrefs(); });
     root.querySelectorAll('[data-theme]').forEach(btn => btn.addEventListener('click', () => { ui.theme = btn.dataset.theme; applyUi(); savePrefs(); }));
     root.getElementById('reset').addEventListener('click', () => { ui = defaults(); applyUi(); savePrefs(); flash('UI 설정만 초기화했습니다.'); });
     root.getElementById('close-access').addEventListener('click', closeAccess);

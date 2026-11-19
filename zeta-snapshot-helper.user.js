@@ -350,8 +350,8 @@
   function renderSceneModes(characters=profileCandidates()) {
     if(!root)return;
     const host=root.getElementById('scene-controls'),picker=root.getElementById('snapshot-person-picker');
-    const preview=root.getElementById('scene-summary'),title=root.getElementById('snapshot-mode-title');
-    if(!host||!picker||!preview||!title)return;
+    const preview=root.getElementById('scene-summary');
+    if(!host||!picker||!preview)return;
     const scroll=root.getElementById('scroll'),top=scroll?.scrollTop;
     if(!scene.initialized&&characters.length){
       scene.multi=new Set(characters.map((_,i)=>i));scene.initialized=true;

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         제타 짤뽑 도우미
 // @namespace    zeta-snapshot-helper
-// @version      0.3.3
+// @version      0.3.4
 // @description  원본 메시지 직접 선택 · 유저/캐릭터 프로필 사진 감지 및 미리보기 (개발판)
 // @author       casualJH
 // @homepageURL  https://github.com/casualJH/zeta-snapshot-helper
@@ -15,7 +15,7 @@
 // ==/UserScript==
 (function () {
   'use strict';
-  const VERSION = '0.3.3';
+  const VERSION = '0.3.4';
   const FRAME_ORIGIN = 'https://frame.pingpong.ai';
   const API_ORIGIN = 'https://api.zeta-ai.io';
   const PROTOCOL = 'zeta-snapshot-helper:selection:v1';
@@ -1067,18 +1067,18 @@
 .profile-thumb img{width:100%;height:100%;object-fit:cover}
 .profile-details{grid-area:info;display:flex;flex-direction:column;gap:3px;min-width:0;max-width:100%;word-break:keep-all;overflow-wrap:break-word}
 .profile-details strong{font-size:12px}.profile-details small{font-size:11px;color:var(--sub)}.profile-details a{font-size:11px;color:var(--accent);text-decoration:underline}
-.profile-actions{grid-area:actions;min-width:0;width:100%;display:flex;gap:5px;flex-wrap:wrap;align-items:center;justify-content:flex-end;justify-self:stretch}
+.profile-actions{grid-area:actions;min-width:0;width:100%;display:flex;gap:5px;flex-wrap:wrap;align-items:center;justify-content:flex-start;justify-self:stretch}
 .profile-actions button,.profile-description button{border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink);padding:6px 9px;min-height:32px;font-size:11px;white-space:nowrap;flex:none}
 .profile-actions .profile-description-toggle{order:3}
 .profile-description{grid-area:description;min-width:0;display:flex;flex-direction:column;gap:7px;border-top:1px solid var(--line);padding-top:9px}
-/* Compact: photo and identity at top; all three actions share one right-aligned row.
-   Wide: photo, identity and actions share one row. Use the popup's internal width. */
+/* Compact: photo and identity at top; actions align left on the second row.
+   Wide: photo, identity and actions share one row, with actions aligned right. */
 @container zsh-profiles (min-width:370px){
  .profile-card{
   grid-template-columns:58px minmax(0,1fr) max-content;
   grid-template-areas:"thumb info actions" "description description description";
  }
- .profile-actions{width:auto;justify-self:end;flex-wrap:nowrap}
+ .profile-actions{width:auto;justify-self:end;justify-content:flex-end;flex-wrap:nowrap}
  .profile-actions button{padding-inline:5px;font-size:10px}
 }
 .profile-description textarea{width:100%;min-height:90px;max-height:240px;resize:vertical;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink);padding:9px;white-space:pre-wrap;font:12px/1.5 system-ui,-apple-system,sans-serif}

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         제타 짤뽑 도우미
 // @namespace    zeta-snapshot-helper
-// @version      0.4.8
+// @version      0.4.9
 // @description  1인 스냅샷 프롬프트 생성 · 원본 메시지 선택 · 프로필 감지 (개발판)
 // @author       casualJH
 // @homepageURL  https://github.com/casualJH/zeta-snapshot-helper
@@ -15,7 +15,7 @@
 // ==/UserScript==
 (function () {
   'use strict';
-  const VERSION = '0.4.8';
+  const VERSION = '0.4.9';
   const FRAME_ORIGIN = 'https://frame.pingpong.ai';
   const API_ORIGIN = 'https://api.zeta-ai.io';
   const PROTOCOL = 'zeta-snapshot-helper:selection:v1';
@@ -602,6 +602,7 @@
        const detailButton = document.createElement('button');
        detailButton.type = 'button'; detailButton.className = 'profile-description-toggle';
        const expanded = expandedDescriptions.has(key);
+       item.classList.toggle("has-description", expanded);
        detailButton.textContent = expanded ? '설명 닫기' : '설명';
        detailButton.setAttribute('aria-expanded', String(expanded));
        if(person?.image) {
@@ -629,6 +630,7 @@
        detailButton.addEventListener('click', () => {
          const show = section.hidden;
          section.hidden = !show;
+         item.classList.toggle("has-description", show);
          detailButton.textContent = show ? '설명 닫기' : '설명';
          detailButton.setAttribute('aria-expanded', String(show));
          if (show) expandedDescriptions.add(key);
@@ -1247,11 +1249,12 @@
 .profile-card{
  display:grid;
  grid-template-columns:58px minmax(0,1fr);
- grid-template-areas:"thumb info" ". actions" "description description";
+ grid-template-areas:"thumb info" ". actions";
  column-gap:10px;row-gap:6px;align-items:start;align-content:start;grid-auto-rows:min-content;
  border:1px solid var(--line);border-radius:10px;padding:11px 10px;margin:8px 0;
  background:var(--muted);min-width:0;max-width:100%;
 }
+.profile-card.has-description{grid-template-areas:"thumb info" ". actions" "description description"}
 .profile-thumb{grid-area:thumb;width:58px;height:58px;border-radius:9px;background:var(--bg);display:flex;justify-content:center;align-items:center;overflow:hidden;color:var(--sub);text-align:center;font-size:10px}
 .profile-thumb img{width:100%;height:100%;object-fit:cover}
 .profile-details{grid-area:info;display:flex;flex-direction:column;gap:3px;min-width:0;max-width:100%;word-break:keep-all;overflow-wrap:break-word}
@@ -1265,9 +1268,10 @@
 @container zsh-profiles (min-width:370px){
  .profile-card{
   grid-template-columns:58px minmax(0,1fr) max-content;
-  grid-template-areas:"thumb info actions" "description description description";
+  grid-template-areas:"thumb info actions";
   align-items:center;
  }
+ .profile-card.has-description{grid-template-areas:"thumb info actions" "description description description"}
  .profile-actions{width:auto;justify-self:end;justify-content:flex-end;flex-wrap:nowrap;align-self:center}
  #scroll .profile-actions button{padding-inline:5px;font-size:10px}
 }

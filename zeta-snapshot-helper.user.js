@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         제타 짤뽑 도우미
 // @namespace    zeta-snapshot-helper
-// @version      0.3.0
+// @version      0.3.1
 // @description  원본 메시지 직접 선택 · 유저/캐릭터 프로필 사진 감지 및 미리보기 (개발판)
 // @author       casualJH
 // @homepageURL  https://github.com/casualJH/zeta-snapshot-helper
@@ -15,7 +15,7 @@
 // ==/UserScript==
 (function () {
   'use strict';
-  const VERSION = '0.3.0';
+  const VERSION = '0.3.1';
   const FRAME_ORIGIN = 'https://frame.pingpong.ai';
   const API_ORIGIN = 'https://api.zeta-ai.io';
   const PROTOCOL = 'zeta-snapshot-helper:selection:v1';
@@ -440,7 +440,6 @@
        const expanded = expandedDescriptions.has(key);
        detailButton.textContent = expanded ? '설명 닫기' : '설명';
        detailButton.setAttribute('aria-expanded', String(expanded));
-       actions.appendChild(detailButton);
        if(person?.image) {
          const imageButton=document.createElement('button');
          imageButton.type='button';imageButton.textContent='이미지 복사';
@@ -450,6 +449,7 @@
          urlButton.addEventListener('click',()=>copyProfileUrl(person.image,person.name||role));
          actions.append(imageButton,urlButton);
        }
+       actions.appendChild(detailButton);
        item.append(thumb, body, actions);
        const section = document.createElement('div'); section.className = 'profile-description';
        section.hidden = !expanded;
@@ -1053,10 +1053,27 @@
 #status{white-space:pre-wrap;padding:9px 10px;border:1px solid var(--line);border-radius:9px;background:var(--muted);color:var(--sub);min-height:40px;font-size:12px}
 .stats{display:flex;gap:8px;margin:10px 0}.stat{flex:1;background:var(--muted);border-radius:9px;padding:10px}.stat small{display:block;color:var(--sub)}.stat strong{display:block;font-size:19px}
 #preview{resize:vertical;width:100%;min-height:148px;max-height:430px;white-space:pre-wrap;background:var(--muted);border:1px solid var(--line);color:var(--ink);border-radius:9px;padding:10px;font:12px/1.6 ui-monospace,SFMono-Regular,monospace}
-#summary{font-size:12px;color:var(--sub)}.profile-card{display:flex;flex-wrap:wrap;gap:10px;align-items:center;border:1px solid var(--line);border-radius:10px;padding:9px;margin:8px 0;background:var(--muted);min-width:0}.profile-thumb{width:58px;height:58px;min-width:58px;border-radius:9px;background:var(--bg);display:flex;justify-content:center;align-items:center;overflow:hidden;color:var(--sub);text-align:center;font-size:10px}.profile-thumb img{width:100%;height:100%;object-fit:cover}.profile-details{display:flex;flex:1;flex-direction:column;gap:3px;min-width:0;overflow-wrap:anywhere}.profile-details strong{font-size:12px}.profile-details small{font-size:11px;color:var(--sub)}.profile-details a{font-size:11px;color:var(--accent);text-decoration:underline}
-.profile-actions{margin-left:auto;flex:none;display:flex;gap:5px;flex-wrap:wrap;justify-content:flex-end}
-.profile-actions button,.profile-description button{border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink);padding:6px 9px;min-height:32px;font-size:11px}
-.profile-description{flex:0 0 100%;min-width:0;display:flex;flex-direction:column;gap:7px;border-top:1px solid var(--line);padding-top:9px}
+#summary{font-size:12px;color:var(--sub)}
+#profile-cards{container-type:inline-size;container-name:zsh-profiles;min-width:0}
+.profile-card{
+ display:grid;
+ grid-template-columns:58px minmax(0,1fr);
+ grid-template-areas:"thumb info" "thumb actions" "description description";
+ column-gap:10px;row-gap:8px;align-items:center;
+ border:1px solid var(--line);border-radius:10px;padding:9px;margin:8px 0;
+ background:var(--muted);min-width:0;max-width:100%;
+}
+.profile-thumb{grid-area:thumb;width:58px;height:58px;border-radius:9px;background:var(--bg);display:flex;justify-content:center;align-items:center;overflow:hidden;color:var(--sub);text-align:center;font-size:10px}
+.profile-thumb img{width:100%;height:100%;object-fit:cover}
+.profile-details{grid-area:info;display:flex;flex-direction:column;gap:3px;min-width:0;max-width:100%;word-break:keep-all;overflow-wrap:break-word}
+.profile-details strong{font-size:12px}.profile-details small{font-size:11px;color:var(--sub)}.profile-details a{font-size:11px;color:var(--accent);text-decoration:underline}
+.profile-actions{grid-area:actions;min-width:0;max-width:100%;display:flex;gap:5px;flex-wrap:wrap;align-items:center;justify-content:flex-end;justify-self:end}
+.profile-actions button,.profile-description button{border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink);padding:6px 9px;min-height:32px;font-size:11px;white-space:nowrap;flex:none}
+.profile-description{grid-area:description;min-width:0;display:flex;flex-direction:column;gap:7px;border-top:1px solid var(--line);padding-top:9px}
+@container zsh-profiles (min-width:590px){
+ .profile-card{grid-template-columns:58px minmax(150px,1fr) max-content;grid-template-areas:"thumb info actions" "description description description";}
+ .profile-actions{flex-wrap:nowrap}
+}
 .profile-description textarea{width:100%;min-height:90px;max-height:240px;resize:vertical;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink);padding:9px;white-space:pre-wrap;font:12px/1.5 system-ui,-apple-system,sans-serif}
 .profile-description button{align-self:flex-end}.note{font-size:11px;color:var(--sub);white-space:pre-line}.settings{border-top:1px solid var(--line);margin-top:18px;padding-top:8px}.settings label{display:block;margin:9px 0 4px}.settings input[type="text"]{width:100%;padding:7px;border-radius:7px;background:var(--bg);border:1px solid var(--line);color:var(--ink)}.settings input[type="range"]{width:100%;accent-color:var(--accent)}
 .scene-tabs{display:flex;gap:3px;border-radius:10px;border:1px solid var(--line);background:var(--muted);padding:3px}
@@ -1073,7 +1090,7 @@
 #access{position:fixed;inset:0;margin:auto;width:min(320px,90vw);height:fit-content;max-height:85vh;overflow:auto;box-sizing:border-box;color:#f5f5f5;background:#30303a;border:1px solid #777;border-radius:12px;padding:14px;z-index:2147483645;font:14px/1.5 system-ui,sans-serif}
 #access::backdrop{background:#0008}#access p{margin:8px 0}#access details{margin:8px 0}#access summary{cursor:pointer;padding:6px 0;font-weight:700}#access img{display:block;width:100%;height:auto;border-radius:6px}#access a{color:#9fd5ff;text-decoration:underline}#access #close-access{width:100%;text-align:center;color:#f5f5f5;background:#383946;border:1px solid #696b79;border-radius:9px;min-height:40px;padding:7px 10px;margin-top:10px}
 </style>
-<button id="launch" type="button" aria-label="제타 짤뽑 도우미 열기"><span class="zsh-text"></span><span class="zsh-count"></span></button>
+<button id="launch" type="button" aria-label="짤뽑 도우미" title="짤뽑 도우미"><span class="zsh-text"></span><span class="zsh-count"></span></button>
 <section id="panel" hidden aria-label="제타 짤뽑 도우미">
  <header id="head"><strong>제타 짤뽑 도우미</strong><span class="version">v${VERSION}</span><button id="close" type="button">닫기</button></header>
  <div id="scroll">
@@ -1096,7 +1113,7 @@
   <p id="summary" aria-live="polite">선택한 메시지가 없습니다.</p>
   <textarea id="preview" readonly placeholder="선택한 원본 메시지가 여기에 표시됩니다."></textarea>
   <div class="row"><span id="chars" class="note">0자</span><button id="copy" type="button">선택 원문 복사</button></div>
-  <p class="note">현재는 0.3.0 개발판입니다. 인원수 선택, 이미지 복사 및 URL 복사가 추가되었습니다. 전용 프롬프트는 추후 제공되는 템플릿에 맞춰 적용합니다.</p>
+  <p class="note">현재는 0.3.1 개발판입니다. 인원수 선택, 이미지 복사 및 URL 복사가 추가되었습니다. 전용 프롬프트는 추후 제공되는 템플릿에 맞춰 적용합니다.</p>
   <div class="settings"><h3>설정</h3><label for="size">실행 버튼 크기 <span id="size-val">100%</span></label><input id="size" type="range" min="65" max="155" step="5">
    <label for="btn-label">실행 버튼 표시 (글자·이모지)</label><input id="btn-label" type="text" maxlength="36" placeholder="🖼️">
    <label>테마 &gt; 화면 모드</label><div class="segment" role="group" aria-label="화면 모드"><button type="button" data-theme="light">라이트 모드</button><button type="button" data-theme="dark">다크 모드</button><button type="button" data-theme="system">기기 설정</button></div>

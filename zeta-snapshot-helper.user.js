@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         제타 짤뽑 도우미
 // @namespace    zeta-snapshot-helper
-// @version      0.4.1
+// @version      0.4.2
 // @description  1인 스냅샷 프롬프트 생성 · 원본 메시지 선택 · 프로필 감지 (개발판)
 // @author       casualJH
 // @homepageURL  https://github.com/casualJH/zeta-snapshot-helper
@@ -15,7 +15,7 @@
 // ==/UserScript==
 (function () {
   'use strict';
-  const VERSION = '0.4.1';
+  const VERSION = '0.4.2';
   const FRAME_ORIGIN = 'https://frame.pingpong.ai';
   const API_ORIGIN = 'https://api.zeta-ai.io';
   const PROTOCOL = 'zeta-snapshot-helper:selection:v1';
@@ -90,6 +90,24 @@
   const expandedDescriptions = new Set();
   const scene={mode:'2',solo:'user',pair:0,multiUser:true,multi:new Set(),initialized:false};
   let includeChat=false, generatedRoom=room;
+  const modeDrafts=Object.fromEntries(['1','2','multi'].map(k=>[k,{input:'',output:'',includeChat:false,generatedRoom:room}]));
+  function saveModeDraft() {
+    if(!root)return;
+    const d=modeDrafts[scene.mode];
+    d.input=root.getElementById('snapshot-user-input').value;
+    d.output=root.getElementById('snapshot-output').value;
+    d.includeChat=includeChat;d.generatedRoom=generatedRoom;
+  }
+  function restoreModeDraft() {
+    const d=modeDrafts[scene.mode];includeChat=d.includeChat;generatedRoom=d.generatedRoom;
+    if(!root)return;
+    root.getElementById('snapshot-user-input').value=d.input;
+    root.getElementById('snapshot-output').value=d.output;
+  }
+  function switchSceneMode(mode){
+    if(mode===scene.mode)return;
+    saveModeDraft();scene.mode=mode;restoreModeDraft();renderSceneModes();
+  }
   const plotIntroductions = new Map();
   const screenDescriptions = new Map();
   let descriptionReadScheduled = false;
@@ -119,8 +137,9 @@
     profileState.characters = []; profileState.candidates = []; profileState.plotId = null;
     profileState.source = ''; profileState.updatedAt = 0; lastFrameSnapshot = ''; attemptedPersonas.clear();
     expandedDescriptions.clear(); plotIntroductions.clear(); screenDescriptions.clear();
-    scene.pair=0;scene.multiUser=true;scene.multi.clear();scene.initialized=false;
+    scene.pair=0;scene.solo='user';scene.multiUser=true;scene.multi.clear();scene.initialized=false;
     includeChat=false;generatedRoom=currentRoom();
+    for(const d of Object.values(modeDrafts)){d.input='';d.output='';d.includeChat=false;d.generatedRoom=generatedRoom;}
     if(root){
       const input=root.getElementById('snapshot-user-input'),output=root.getElementById('snapshot-output');
       if(input)input.value='';
@@ -328,82 +347,63 @@
   }
   function renderSceneModes(characters=profileCandidates()) {
     if(!root)return;
-    const host=root.getElementById('scene-controls'),preview=root.getElementById('scene-summary');
-    const soloPicker=root.getElementById('snapshot-person-picker');
-    const soloSummary=root.getElementById('snapshot-solo-summary');
-    const otherSummary=root.getElementById('scene-other-summary');
-    const soloSection=root.getElementById('snapshot-solo-section');
-    if(!host||!preview||!soloPicker||!soloSummary||!otherSummary||!soloSection)return;
-    soloSection.hidden=scene.mode!=='1';
-    soloPicker.replaceChildren();
-    (scene.mode==='1'?soloSummary:otherSummary).appendChild(preview);
-    if(!scene.initialized&&characters.length) {
+    const host=root.getElementById('scene-controls'),picker=root.getElementById('snapshot-person-picker');
+    const preview=root.getElementById('scene-summary'),title=root.getElementById('snapshot-mode-title');
+    if(!host||!picker||!preview||!title)return;
+    const scroll=root.getElementById('scroll'),top=scroll?.scrollTop;
+    if(!scene.initialized&&characters.length){
       scene.multi=new Set(characters.map((_,i)=>i));scene.initialized=true;
     }
     host.replaceChildren();
     const tabs=document.createElement('div');tabs.className='scene-tabs';
     for(const [mode,label] of [['1','1인'],['2','2인'],['multi','다인']]){
-      const button=document.createElement('button');button.textContent=label;button.type='button';
-      button.setAttribute('aria-pressed',String(scene.mode===mode));
-      button.addEventListener('click',()=>{scene.mode=mode;renderSceneModes();updateSnapshotControls();});
-      tabs.appendChild(button);
+      const b=document.createElement('button');b.type='button';b.textContent=label;
+      b.setAttribute('aria-pressed',String(scene.mode===mode));
+      b.addEventListener('click',()=>switchSceneMode(mode));tabs.appendChild(b);
     }
     host.appendChild(tabs);
-    const options=document.createElement('div');options.className='scene-pickers';
-    const addOption=(select,value,label)=>select.appendChild(new Option(label,value));
-    if(scene.mode==='1'){
-      const select=document.createElement('select');select.setAttribute('aria-label','1인 촬영 대상');
-      addOption(select,'user','유저');
-      characters.forEach((c,i)=>addOption(select,'char:'+i,c.name||'캐릭터 '+(i+1)));
-      if(scene.solo!=='user'&&!characters[Number(scene.solo.split(':')[1])])scene.solo='user';
-      select.value=scene.solo;
-      select.addEventListener('change',()=>{scene.solo=select.value;renderSceneModes();updateSnapshotControls();});
-      soloPicker.appendChild(select);
-    }else if(scene.mode==='2'){
-      const caption=document.createElement('span');caption.textContent='유저 + 캐릭터 1명';
-      const select=document.createElement('select');select.setAttribute('aria-label','2인 모드 캐릭터');
-      characters.forEach((c,i)=>addOption(select,String(i),c.name||'캐릭터 '+(i+1)));
-      if(characters.length){scene.pair=Math.min(scene.pair,characters.length-1);select.value=String(scene.pair);}
-      else addOption(select,'','캐릭터 미확인');
-      select.disabled=!characters.length;
-      select.addEventListener('change',()=>{scene.pair=Number(select.value)||0;renderSceneModes();});
-      options.append(caption,select);
-    }else{
-      const box=(label,checked,change)=>{
-        const row=document.createElement('label');row.className='scene-checkbox';
-        const input=document.createElement('input');input.type='checkbox';input.checked=checked;
-        const span=document.createElement('span');span.textContent=label;
-        input.addEventListener('change',()=>{change(input.checked);renderSceneModes();});
-        row.append(input,span);return row;
-      };
-      options.appendChild(box('유저 포함',scene.multiUser,value=>{scene.multiUser=value;}));
-      characters.forEach((c,i)=>options.appendChild(box(c.name||'캐릭터 '+(i+1),
-        scene.multi.has(i),value=>value?scene.multi.add(i):scene.multi.delete(i))));
+    title.textContent=({1:'1인',2:'2인',multi:'다인'})[scene.mode]+' 스냅샷 프롬프트';
+    picker.replaceChildren();
+    function chip(label,active,action,disabled=false){
+      const b=document.createElement('button');b.type='button';b.textContent=label;
+      b.setAttribute('aria-pressed',String(Boolean(active)));b.disabled=disabled;
+      if(!disabled)b.addEventListener('click',action);
+      picker.appendChild(b);
     }
-    if(scene.mode!=='1')host.appendChild(options);
-    const participants=[];
+    const included=[];
     if(scene.mode==='1'){
-      if(scene.solo==='user')participants.push(['유저',profileState.user]);
-      else{const char=characters[Number(scene.solo.split(':')[1])];if(char)participants.push(['캐릭터',char]);}
+      if(scene.solo!=='user'&&!characters[Number(scene.solo.split(':')[1])])scene.solo='user';
+      chip('유저',scene.solo==='user',()=>{scene.solo='user';renderSceneModes();});
+      characters.forEach((c,i)=>chip(c.name||'캐릭터 '+(i+1),scene.solo==='char:'+i,()=>{scene.solo='char:'+i;renderSceneModes();}));
+      if(scene.solo==='user')included.push(['유저',profileState.user]);
+      else{const c=characters[Number(scene.solo.split(':')[1])];if(c)included.push(['캐릭터',c]);}
     }else if(scene.mode==='2'){
-      participants.push(['유저',profileState.user]);
-      if(characters[scene.pair])participants.push(['캐릭터',characters[scene.pair]]);
+      if(characters.length)scene.pair=Math.min(scene.pair,characters.length-1);
+      chip('유저 (고정)',true,()=>{},true);
+      if(!characters.length)chip('캐릭터 미확인',false,()=>{},true);
+      characters.forEach((c,i)=>chip(c.name||'캐릭터 '+(i+1),scene.pair===i,()=>{scene.pair=i;renderSceneModes();}));
+      included.push(['유저',profileState.user]);
+      if(characters[scene.pair])included.push(['캐릭터',characters[scene.pair]]);
     }else{
-      if(scene.multiUser)participants.push(['유저',profileState.user]);
-      characters.forEach((c,i)=>{if(scene.multi.has(i))participants.push(['캐릭터',c]);});
+      chip('유저',scene.multiUser,()=>{scene.multiUser=!scene.multiUser;renderSceneModes();});
+      characters.forEach((c,i)=>chip(c.name||'캐릭터 '+(i+1),scene.multi.has(i),()=>{
+        if(scene.multi.has(i))scene.multi.delete(i);else scene.multi.add(i);renderSceneModes();
+      }));
+      if(scene.multiUser)included.push(['유저',profileState.user]);
+      characters.forEach((c,i)=>{if(scene.multi.has(i))included.push(['캐릭터',c]);});
     }
     preview.replaceChildren();
-    const title=document.createElement('strong');title.textContent='포함 인물 '+participants.length+'명';preview.appendChild(title);
-    participants.forEach(([role,person],i)=>{
+    const head=document.createElement('strong');head.textContent='포함 인물 '+included.length+'명';preview.appendChild(head);
+    included.forEach(([role,person],i)=>{
       const line=document.createElement('div');
       line.textContent='첨부사진'+(i+1)+' — '+(person?.name||(role==='유저'?'유저 프로필 미확인':'캐릭터 미확인'))+
         ' ('+role+') · '+(person?.image?'사진 확인됨':'사진 미확인');
       preview.appendChild(line);
     });
-    if(!participants.length)preview.appendChild(document.createTextNode('선택된 인물이 없습니다.'));
+    if(!included.length)preview.appendChild(document.createTextNode('선택된 인물이 없습니다.'));
     updateSnapshotControls();
+    if(scroll&&Number.isFinite(top))scroll.scrollTop=top;
   }
-
 
   function selectedSoloProfile() {
     if(scene.mode!=='1')return null;
@@ -423,16 +423,15 @@
     if(!gen||!toggle||!copy||!label||!output)return;
     const enabled=scene.mode==='1';
     gen.disabled=!enabled;
-    toggle.disabled=!enabled;
+    toggle.disabled=false;
+    root.getElementById('snapshot-template-note').hidden=enabled;
     toggle.setAttribute('aria-pressed',String(includeChat));
     toggle.textContent=includeChat?'대화내용 첨부 해제':'대화내용 첨부';
     copy.disabled=!output.value.trim();
     const count=loaded.filter(x=>chosen.has(x.id)).length;
-    label.textContent=!enabled?'1인 모드를 선택해 주세요.':
-      includeChat?'선택 메시지 '+count+'개 · 생성 시 대화내용 삽입':'대화내용은 선택적으로 첨부합니다.';
+    label.textContent=includeChat?'선택 메시지 '+count+'개 · 생성 시 대화내용 삽입':'대화내용은 선택적으로 첨부합니다.';
   }
   function toggleSnapshotChat() {
-    if(scene.mode!=='1')return;
     if(!includeChat&&!selectedRaw().trim()) {
       flash('먼저 대화 말풍선을 선택해 주세요.');
       return;
@@ -454,13 +453,15 @@
       ? '다음은 두 캐릭터의 대사와 행동지문이다.\n[대화내용]\n\n'+raw+'\n\n'
       : '';
     const userInput=root.getElementById('snapshot-user-input').value;
+    const formattedInput=userInput.trim()?'내용/분위기 : '+userInput:'';
     const url=subject.person?.image||'';
     const result=SOLO_SNAPSHOT_TEMPLATE
       .replace('{{CHAT_BLOCK}}',chatBlock)
-      .replace('{{USER_INPUT}}',userInput)
+      .replace('{{USER_INPUT}}',formattedInput)
       .replace('{{IMAGE_URL}}',url);
     root.getElementById('snapshot-output').value=result;
     generatedRoom=currentRoom();
+    saveModeDraft();
     updateSnapshotControls();
     flash(url?'1인 스냅샷 프롬프트를 생성했습니다.':'이미지 URL이 미확인입니다. 결과에서 직접 입력할 수 있습니다.');
   }
@@ -924,6 +925,11 @@
     selectionMode = false; validatedFrame = null;
     syncFrame(); render();
   }
+  function cancelSelectingFromTop(){
+    if(!selectionMode)return;
+    endSelecting();
+    panel.hidden=false;limitPositions();applyUi();render();
+  }
   function toggleMessage(id) {
     if (!selectionMode || validatedFrame !== chatFrame() || !loaded.some(item => item.id === id)) return;
     if (chosen.has(id)) chosen.delete(id); else chosen.add(id);
@@ -950,6 +956,7 @@
   }
   function render() {
     if (!root) return;
+    const scroller=root.getElementById('scroll'),position=scroller?.scrollTop;
     const count = loaded.filter(item => chosen.has(item.id)).length;
     root.getElementById('collected').textContent = `${loaded.length}개`;
     root.getElementById('selected').textContent = `${count}개`;
@@ -967,7 +974,10 @@
     selectedSummary.textContent = count ? `선택한 원본 메시지 ${count}개 · 실제 대화 순서로 표시` : '선택한 메시지가 없습니다.';
     updateSnapshotControls();
     syncFrame();
-    renderProfiles();
+    root.getElementById('selection-cancel').hidden=!selectionMode;
+    root.getElementById('tip').dataset.selecting=String(selectionMode);
+    // Avoid DOM rebuilding above the scroller on every asynchronous history status update.
+    if(scroller&&Number.isFinite(position))scroller.scrollTop=position;
   }
   async function copyRaw() {
     const text = rawPreview.value;
@@ -1074,6 +1084,7 @@
   function flash(text) {
     if (!root) return;
     const tip = root.getElementById('tip');
+    tip.dataset.selecting=String(selectionMode);
     tip.textContent = text; tip.hidden = false;
     clearTimeout(flash.timer);
     flash.timer = setTimeout(() => { tip.hidden = true; }, 2400);
@@ -1185,10 +1196,12 @@
 .scene-tabs button{flex:1!important;border:0!important;background:transparent!important;border-radius:8px!important}
 .scene-tabs button[aria-pressed="true"]{background:var(--bg)!important;box-shadow:0 1px 4px #0002}
 .scene-pickers{display:flex;flex-direction:column;gap:9px;margin:10px 0}
-.scene-pickers select,#snapshot-person-picker select{display:block;width:100%;min-width:0;min-height:48px;appearance:auto;-webkit-appearance:menulist;background:var(--muted);color:var(--ink);border:1px solid var(--line);border-radius:10px;padding:11px 12px;font:14px/1.5 system-ui,-apple-system,sans-serif}
-#snapshot-person-picker{margin:9px 0 0}
-#snapshot-solo-section{min-width:0}
-#snapshot-solo-section h3{margin-top:18px}
+#snapshot-person-picker{display:flex;flex-wrap:wrap;gap:4px;margin:9px 0;padding:4px;background:var(--muted);border:1px solid var(--line);border-radius:11px;min-width:0}
+#snapshot-person-picker button{flex:1 1 82px;min-width:0;min-height:46px;padding:10px!important;border:0!important;border-radius:8px!important;background:transparent!important;color:var(--ink)!important;text-align:center;overflow-wrap:anywhere}
+#snapshot-person-picker button[aria-pressed="true"]{background:var(--bg)!important;box-shadow:0 1px 4px #0002;font-weight:700}
+#snapshot-person-picker button:disabled{opacity:.75}
+#snapshot-workflow{min-width:0}
+#snapshot-workflow h3{margin-top:18px}
 .snapshot-step{margin:17px 0 9px;font-size:13px;font-weight:700;color:var(--ink)}
 #snapshot-chat-section{margin:16px 0;border:1px solid var(--line);border-radius:10px;background:var(--muted);overflow:hidden}
 #snapshot-chat-section>summary{cursor:pointer;list-style:none;display:flex;align-items:center;justify-content:space-between;gap:8px;min-height:48px;padding:12px 13px;font-size:13px;font-weight:700;color:var(--ink)}
@@ -1199,10 +1212,21 @@
 .snapshot-chat-body .stats{margin:9px 0}
 .snapshot-chat-body #preview{min-height:120px}
 .snapshot-step-generate{margin-top:18px}
-#snapshot-solo-section label[for="snapshot-user-input"],#snapshot-solo-section label[for="snapshot-output"]{display:block;margin:8px 0 6px}
+#snapshot-workflow label[for="snapshot-user-input"],#snapshot-workflow label[for="snapshot-output"]{display:block;margin:8px 0 6px}
 #snapshot-user-input{min-height:115px}
 #snapshot-attach-info{flex:1;min-width:140px}
-#scene-other-summary:empty{display:none}
+#scroll #refresh-profiles,#scroll #snapshot-generate,#scroll #snapshot-copy{display:block;width:100%;min-height:44px;margin:0;text-align:center}
+#scroll #load,#scroll #snapshot-attach,#scroll #snapshot-copy{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+#scroll #copy{margin-left:auto}
+#snapshot-template-note{font-size:11px;color:var(--sub);margin:8px 0}
+#selection-cancel{position:fixed;z-index:2147483644;top:calc(env(safe-area-inset-top,0px) + 16px);left:50%;transform:translateX(-50%);border-radius:999px;min-height:41px;padding:9px 22px;border:1px solid var(--accent);background:var(--bg);color:var(--ink);box-shadow:0 3px 16px #0005;white-space:nowrap}
+#tip[data-selecting="true"]{top:calc(env(safe-area-inset-top,0px) + 70px)}
+.settings>summary{cursor:pointer;list-style:none;padding:11px 0;font-size:13px;font-weight:700;color:var(--ink)}
+.settings>summary::-webkit-details-marker{display:none}
+.settings>summary:before{content:'⏵ ';color:var(--sub)}
+.settings[open]>summary:before{content:'⏷ '}
+.settings-body{padding:4px 0 10px}
+
 
 .scene-checkbox{display:flex;gap:8px;align-items:center}.scene-checkbox input{accent-color:var(--accent);width:17px;height:17px}
 .scene-summary{padding:10px;margin:8px 0 16px;border:1px solid var(--line);background:var(--muted);border-radius:9px;color:var(--sub);font-size:11px}
@@ -1224,42 +1248,42 @@
   <div id="profile-cards"></div>
   <h3>장면 인원수</h3>
   <div id="scene-controls"></div>
-  <div id="scene-other-summary"></div>
-  <section id="snapshot-solo-section">
-   <h3>1인 스냅샷 프롬프트</h3>
+  <section id="snapshot-workflow">
+   <h3 id="snapshot-mode-title">1인 스냅샷 프롬프트</h3>
    <div class="snapshot-step">1. 인물 선택</div>
-   <div id="snapshot-person-picker"></div>
-   <div id="snapshot-solo-summary"><div id="scene-summary" class="scene-summary" aria-live="polite"></div></div>
-   <div class="snapshot-step">2. 추가사항(내용 / 분위기) 입력</div>
-   <textarea id="snapshot-user-input" aria-label="추가사항(내용 / 분위기) 입력" placeholder="예: 카페 창가에서 책을 읽는 장면, 따뜻하고 잔잔한 분위기"></textarea>
+   <div id="snapshot-person-picker" role="group" aria-label="스냅샷 인물 선택"></div>
+   <div id="scene-summary" class="scene-summary" aria-live="polite"></div>
+   <div class="snapshot-step">2. 추가사항 (내용 · 분위기) 입력</div>
+   <textarea id="snapshot-user-input" aria-label="추가사항 (내용 · 분위기) 입력" placeholder="예: 카페 창가에서 책을 읽는 장면, 따뜻하고 잔잔한 분위기"></textarea>
    <details id="snapshot-chat-section">
     <summary>3. 대화 내용 첨부</summary>
     <div class="snapshot-chat-body">
      <div id="status" role="status"></div>
      <div class="stats"><div class="stat"><small>불러온 원본 메시지</small><strong id="collected">0개</strong></div><div class="stat"><small>선택한 원본 메시지</small><strong id="selected">0개</strong></div></div>
-     <div class="row"><button id="load" type="button">과거 대화 불러오기</button><button id="stop" type="button">중지</button></div>
+     <div class="row"><button id="load" class="primary" type="button">과거 대화 불러오기</button><button id="stop" type="button">중지</button></div>
      <p class="note">원본 메시지 단위만 선택합니다. 말풍선을 누르면 전체 원본 메시지가 선택됩니다. 다시 누르면 해제됩니다.</p>
      <div class="row"><button id="start" class="primary" type="button">말풍선 직접 선택</button><button id="clear" type="button">선택 해제</button></div>
      <p id="summary" aria-live="polite">선택한 메시지가 없습니다.</p>
      <textarea id="preview" readonly aria-label="선택 대화 원문" placeholder="선택한 원본 메시지가 여기에 표시됩니다."></textarea>
      <div class="row"><span id="chars" class="note">0자</span><button id="copy" type="button">선택 원문 복사</button></div>
-     <div class="row"><button id="snapshot-attach" type="button" aria-pressed="false">대화내용 첨부</button><span id="snapshot-attach-info" class="note" aria-live="polite"></span></div>
+     <div class="row"><button id="snapshot-attach" class="primary" type="button" aria-pressed="false">대화내용 첨부</button><span id="snapshot-attach-info" class="note" aria-live="polite"></span></div>
     </div>
    </details>
    <div class="snapshot-step snapshot-step-generate">4. 프롬프트 생성</div>
+   <p id="snapshot-template-note" class="note" hidden>2인·다인 전용 프롬프트는 아직 등록되지 않았습니다. 사용자 입력과 대화 선택 UI는 사용할 수 있으며, 템플릿 제공 후 생성이 활성화됩니다.</p>
    <div class="row"><button id="snapshot-generate" class="primary" type="button">프롬프트 생성</button></div>
    <label for="snapshot-output">프롬프트 미리보기 (수정 가능)</label>
    <textarea id="snapshot-output" placeholder="프롬프트를 생성한 후 직접 수정할 수 있습니다."></textarea>
-   <div class="row"><button id="snapshot-copy" type="button">프롬프트 복사</button></div>
+   <div class="row"><button id="snapshot-copy" class="primary" type="button">프롬프트 복사</button></div>
   </section>
-  <p class="note">현재는 0.4.1 개발판입니다. 1인 스냅샷 프롬프트 생성 기능을 테스트합니다. 2인·다인 프롬프트는 후속 버전에서 추가됩니다.</p>
-  <div class="settings"><h3>설정</h3><label for="size">실행 버튼 크기 <span id="size-val">100%</span></label><input id="size" type="range" min="65" max="155" step="5">
+  <details id="settings-section" class="settings"><summary>설정</summary><div class="settings-body"><label for="size">실행 버튼 크기 <span id="size-val">100%</span></label><input id="size" type="range" min="65" max="155" step="5">
    <label for="btn-label">실행 버튼 표시 (글자·이모지)</label><input id="btn-label" type="text" maxlength="36" placeholder="🖼️">
    <label>테마 &gt; 화면 모드</label><div class="segment" role="group" aria-label="화면 모드"><button type="button" data-theme="light">라이트 모드</button><button type="button" data-theme="dark">다크 모드</button><button type="button" data-theme="system">기기 설정</button></div>
    <div class="row"><button id="reset" type="button">UI 설정 초기화</button></div>
-  </div>
+  </div></details>
  </div><div id="resize" role="separator" aria-label="팝업창 크기 조절">◢</div>
 </section>
+<button id="selection-cancel" type="button" hidden>선택 취소</button>
 <div id="tip" hidden role="status"></div>
 <dialog id="access" aria-labelledby="access-title">
  <strong id="access-title">Tampermonkey 사이트 접근 안내</strong>
@@ -1273,7 +1297,7 @@
     launch = root.getElementById('launch'); panel = root.getElementById('panel');
     statusBox = root.getElementById('status'); rawPreview = root.getElementById('preview');
     selectedSummary = root.getElementById('summary'); accessDialog = root.getElementById('access');
-    limitPositions(); applyUi(); render();
+    limitPositions(); applyUi(); render(); renderProfiles();
     bindDrag(launch, launch, 'buttonX', 'buttonY');
     bindDrag(root.getElementById('head'), panel, 'panelX', 'panelY', 'button');
     bindResize(root.getElementById('resize'));
@@ -1290,6 +1314,7 @@
     root.getElementById('start').addEventListener('click', () => selectionMode ? endSelecting() : startSelecting());
     root.getElementById('clear').addEventListener('click', () => { chosen.clear(); render(); });
     root.getElementById('copy').addEventListener('click', copyRaw);
+    root.getElementById('selection-cancel').addEventListener('click',cancelSelectingFromTop);
     root.getElementById('snapshot-attach').addEventListener('click',toggleSnapshotChat);
     root.getElementById('snapshot-generate').addEventListener('click',generateSoloSnapshot);
     root.getElementById('snapshot-copy').addEventListener('click',copySoloSnapshot);

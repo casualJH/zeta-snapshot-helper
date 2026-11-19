@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         제타 짤뽑 도우미
 // @namespace    zeta-snapshot-helper
-// @version      0.4.3
+// @version      0.4.4
 // @description  1인 스냅샷 프롬프트 생성 · 원본 메시지 선택 · 프로필 감지 (개발판)
 // @author       casualJH
 // @homepageURL  https://github.com/casualJH/zeta-snapshot-helper
@@ -15,7 +15,7 @@
 // ==/UserScript==
 (function () {
   'use strict';
-  const VERSION = '0.4.3';
+  const VERSION = '0.4.4';
   const FRAME_ORIGIN = 'https://frame.pingpong.ai';
   const API_ORIGIN = 'https://api.zeta-ai.io';
   const PROTOCOL = 'zeta-snapshot-helper:selection:v1';
@@ -420,6 +420,58 @@
     if(scroll&&Number.isFinite(top))scroll.scrollTop=top;
   }
 
+  // Resolve people in the same order used by the on-screen numbered image summary.
+  function selectedScenePeople(characters=profileCandidates()) {
+    if(scene.mode==='1') {
+      if(scene.solo==='user')return [{role:'유저',person:profileState.user}];
+      const match=/^char:(\\d+)$/.exec(scene.solo);
+      const person=match?characters[Number(match[1])]:null;
+      return person?[{role:'캐릭터',person}]:[];
+    }
+    const people=[];
+    const addUser=()=>people.push({role:'유저',person:profileState.user});
+    if(scene.mode==='2') {
+      if(scene.pairPeople.has('user'))addUser();
+      characters.forEach((person,i)=>{
+        if(scene.pairPeople.has('char:'+i))people.push({role:'캐릭터',person});
+      });
+    }else if(scene.mode==='multi'){
+      if(scene.multiUser)addUser();
+      characters.forEach((person,i)=>{
+        if(scene.multi.has(i))people.push({role:'캐릭터',person});
+      });
+    }
+    return people;
+  }
+  function formatSceneReferenceBlock(people) {
+    return '[등장인물 및 참조 이미지]\\n\\n'+people.map(({role,person},i)=>{
+      const name=person?.name|| (role==='유저'?'유저 프로필 미확인':'캐릭터 이름 미확인');
+      return '첨부사진'+(i+1)+'\\n이름: '+name+'\\n이미지 URL: '+(person?.image||'사진 미확인');
+    }).join('\\n\\n');
+  }
+  function generateSceneReferences() {
+    const people=selectedScenePeople();
+    if(scene.mode==='2'&&people.length!==2){
+      flash('2인 모드에서는 인물 2명을 선택해 주세요.');return;
+    }
+    if(scene.mode==='multi'&&people.length<2){
+      flash('다인 모드에서는 인물 2명 이상을 선택해 주세요.');return;
+    }
+    if(!people.length){flash('인물을 선택해 주세요.');return;}
+    const raw=includeChat?selectedRaw():'';
+    if(includeChat&&!raw.trim()){flash('첨부할 대화를 선택해 주세요.');return;}
+    const text=root.getElementById('snapshot-user-input').value;
+    const additions=text.trim()?'내용/분위기 : '+text+'\\n\\n':'';
+    const conversation=raw.trim()?'다음은 두 캐릭터의 대사와 행동지문이다.\\n[대화내용]\\n\\n'+raw+'\\n\\n':'';
+    const result=conversation+additions+formatSceneReferenceBlock(people);
+    root.getElementById('snapshot-output').value=result;
+    generatedRoom=currentRoom();saveModeDraft();updateSnapshotControls();
+    flash('선택 인물의 이름과 이미지 URL을 정리했습니다.');
+  }
+  function generateSnapshot() {
+    if(scene.mode==='1')generateSoloSnapshot();
+    else generateSceneReferences();
+  }
   function selectedSoloProfile() {
     if(scene.mode!=='1')return null;
     if(scene.solo==='user')return {type:'유저',person:profileState.user};
@@ -436,10 +488,12 @@
     const label=root.getElementById('snapshot-attach-info');
     const output=root.getElementById('snapshot-output');
     if(!gen||!toggle||!copy||!label||!output)return;
-    const enabled=scene.mode==='1';
-    gen.disabled=!enabled;
+    const one=scene.mode==='1';
+    const countPeople=selectedScenePeople().length;
+    gen.disabled=!one&&((scene.mode==='2'&&countPeople!==2)||(scene.mode==='multi'&&countPeople<2));
+    gen.textContent=one?'프롬프트 생성':'참조 이미지 목록 생성';
     toggle.disabled=false;
-    root.getElementById('snapshot-template-note').hidden=enabled;
+    root.getElementById('snapshot-template-note').hidden=one;
     toggle.setAttribute('aria-pressed',String(includeChat));
     toggle.textContent=includeChat?'대화내용 첨부 해제':'대화내용 첨부';
     copy.disabled=!output.value.trim();
@@ -1294,7 +1348,7 @@
     </div>
    </details>
    <div class="snapshot-step snapshot-step-generate">4. 프롬프트 생성</div>
-   <p id="snapshot-template-note" class="note" hidden>2인·다인 전용 프롬프트는 아직 등록되지 않았습니다. 사용자 입력과 대화 선택 UI는 사용할 수 있으며, 템플릿 제공 후 생성이 활성화됩니다.</p>
+   <p id="snapshot-template-note" class="note" hidden>2인·다인 전용 프롬프트는 아직 등록되지 않았습니다. 현재는 선택 인물의 첨부사진 번호·이름·이미지 URL 목록을 생성하고 복사할 수 있습니다.</p>
    <div class="row"><button id="snapshot-generate" class="primary" type="button">프롬프트 생성</button></div>
    <label for="snapshot-output">프롬프트 미리보기 (수정 가능)</label>
    <textarea id="snapshot-output" placeholder="프롬프트를 생성한 후 직접 수정할 수 있습니다."></textarea>
@@ -1341,7 +1395,7 @@
     root.getElementById('selection-done').addEventListener('click',finishSelectingFromTop);
     root.getElementById('selection-cancel').addEventListener('click',cancelSelectingFromTop);
     root.getElementById('snapshot-attach').addEventListener('click',toggleSnapshotChat);
-    root.getElementById('snapshot-generate').addEventListener('click',generateSoloSnapshot);
+    root.getElementById('snapshot-generate').addEventListener('click',generateSnapshot);
     root.getElementById('snapshot-copy').addEventListener('click',copySoloSnapshot);
     root.getElementById('snapshot-output').addEventListener('input',updateSnapshotControls);
     root.getElementById('size').addEventListener('input', e => { ui.buttonSize = Number(e.target.value); applyUi(); savePrefs(); });

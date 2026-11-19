@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         제타 짤뽑 도우미
 // @namespace    zeta-snapshot-helper
-// @version      0.3.2
+// @version      0.3.3
 // @description  원본 메시지 직접 선택 · 유저/캐릭터 프로필 사진 감지 및 미리보기 (개발판)
 // @author       casualJH
 // @homepageURL  https://github.com/casualJH/zeta-snapshot-helper
@@ -15,7 +15,7 @@
 // ==/UserScript==
 (function () {
   'use strict';
-  const VERSION = '0.3.2';
+  const VERSION = '0.3.3';
   const FRAME_ORIGIN = 'https://frame.pingpong.ai';
   const API_ORIGIN = 'https://api.zeta-ai.io';
   const PROTOCOL = 'zeta-snapshot-helper:selection:v1';
@@ -425,7 +425,7 @@
       const body = document.createElement('div'); body.className = 'profile-details';
       const name = document.createElement('strong'); name.textContent = person?.name || (role === 'user' ? '유저 대화 프로필' : '이름 미확인');
       const info = document.createElement('small'); info.textContent = role === 'user' ?
-        `유저 · ${person?.source || profileState.userStatus}` :
+        `유저 · ${person?.image ? '사진 확인됨' : '사진 미확인'}` :
         (person.candidate ? '화면 아바타 후보 · 인물 정보 미확인' : `캐릭터 · ${person.image ? '사진 확인됨' : '사진 미확인'}`);
       body.append(name, info);
       if (person?.image) {
@@ -1073,12 +1073,13 @@
 .profile-description{grid-area:description;min-width:0;display:flex;flex-direction:column;gap:7px;border-top:1px solid var(--line);padding-top:9px}
 /* Compact: photo and identity at top; all three actions share one right-aligned row.
    Wide: photo, identity and actions share one row. Use the popup's internal width. */
-@container zsh-profiles (min-width:500px){
+@container zsh-profiles (min-width:370px){
  .profile-card{
-  grid-template-columns:58px minmax(140px,1fr) max-content;
+  grid-template-columns:58px minmax(0,1fr) max-content;
   grid-template-areas:"thumb info actions" "description description description";
  }
  .profile-actions{width:auto;justify-self:end;flex-wrap:nowrap}
+ .profile-actions button{padding-inline:5px;font-size:10px}
 }
 .profile-description textarea{width:100%;min-height:90px;max-height:240px;resize:vertical;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink);padding:9px;white-space:pre-wrap;font:12px/1.5 system-ui,-apple-system,sans-serif}
 .profile-description button{align-self:flex-end}.note{font-size:11px;color:var(--sub);white-space:pre-line}.settings{border-top:1px solid var(--line);margin-top:18px;padding-top:8px}.settings label{display:block;margin:9px 0 4px}.settings input[type="text"]{width:100%;padding:7px;border-radius:7px;background:var(--bg);border:1px solid var(--line);color:var(--ink)}.settings input[type="range"]{width:100%;accent-color:var(--accent)}

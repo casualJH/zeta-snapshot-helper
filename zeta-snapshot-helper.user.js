@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         제타 짤뽑 도우미
 // @namespace    zeta-snapshot-helper
-// @version      0.2.0
+// @version      0.2.1
 // @description  원본 메시지 직접 선택 · 유저/캐릭터 프로필 사진 감지 및 미리보기 (개발판)
 // @author       casualJH
 // @homepageURL  https://github.com/casualJH/zeta-snapshot-helper
@@ -15,7 +15,7 @@
 // ==/UserScript==
 (function () {
   'use strict';
-  const VERSION = '0.2.0';
+  const VERSION = '0.2.1';
   const FRAME_ORIGIN = 'https://frame.pingpong.ai';
   const API_ORIGIN = 'https://api.zeta-ai.io';
   const PROTOCOL = 'zeta-snapshot-helper:selection:v1';
@@ -86,6 +86,7 @@
   const knownRequestHeaders = ['authorization', 'x-client-native-version', 'x-client-type', 'x-client-version', 'x-device-type', 'x-user-language'];
   const profileState = {room: room, user: null, userStatus: '미확인', characters: [], candidates: [], plotId: null, source: '', updatedAt: 0};
   let profileRefreshBusy = false, lastFrameSnapshot = '', profileEpoch = 0;
+  const expandedDescriptions = new Set();
   const attemptedPersonas = new Set();
   const IMAGE_KEYS = ['avatarUrl', 'avatar_url', 'profileImageUrl', 'profile_image_url', 'imageUrl', 'image_url', 'thumbnailUrl', 'thumbnail_url'];
   function cleanImage(value) {
@@ -101,15 +102,17 @@
     const id = ['id','uuid','profileId','profile_id','characterId','character_id']
       .map(k => raw[k]).find(v => typeof v === 'string' || typeof v === 'number');
     const image = IMAGE_KEYS.map(k => cleanImage(raw[k])).find(Boolean) || '';
-    if (!name && !image) return null;
+    const description = typeof raw.description === 'string' ? raw.description.slice(0, 30000) : '';
+    if (!name && !image && !description.trim()) return null;
     return {id: id == null ? '' : String(id).slice(0, 140),
-      name: typeof name === 'string' ? name.trim().slice(0, 160) : '', image};
+      name: typeof name === 'string' ? name.trim().slice(0, 160) : '', image, description};
   }
   function resetProfileState() {
     profileEpoch++;
     profileState.room = currentRoom(); profileState.user = null; profileState.userStatus = '미확인';
     profileState.characters = []; profileState.candidates = []; profileState.plotId = null;
     profileState.source = ''; profileState.updatedAt = 0; lastFrameSnapshot = ''; attemptedPersonas.clear();
+    expandedDescriptions.clear();
     renderProfiles();
   }
   function observeProfilePayload(path, payload, sourceRoom) {
@@ -184,7 +187,7 @@
     // Only a uniquely identified selected card can confirm the user photo.
     if (payload.user?.state === 'ok' && cleanImage(payload.user.image)) {
       profileState.user = {id:payload.user.key || '', name:payload.user.name || '현재 대화 프로필',
-        image: cleanImage(payload.user.image), source:'선택된 대화 프로필 카드'};
+        image: cleanImage(payload.user.image), description:profileState.user?.description || '', source:'선택된 대화 프로필 카드'};
       profileState.userStatus = '확인됨';
     } else if (!profileState.user) {
       profileState.userStatus = ({'dialog-closed':'대화 프로필 창을 열면 선택 사진 확인 가능',
@@ -206,6 +209,22 @@
     });
     // No room detail: only show displayed chat avatars as *unverified* candidates.
     return profileState.candidates.map(c => ({...c, id:'', candidate:true}));
+  }
+  async function copyProfileDescription(value) {
+    if (!value.trim()) { setInfo('복사할 프로필 설명을 확인하지 못했습니다.'); return; }
+    try {
+      if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(value);
+      else {
+        const temp = document.createElement('textarea');
+        temp.value = value;
+        temp.style.cssText = 'position:fixed;left:-9999px;top:0;opacity:0';
+        root.appendChild(temp);
+        temp.focus(); temp.select();
+        try { if (!document.execCommand('copy')) throw new Error('copy unsupported'); }
+        finally { temp.remove(); }
+      }
+      setInfo('프로필 설명을 복사했습니다.');
+    } catch (_) { setInfo('자동 복사를 사용할 수 없습니다. 설명을 직접 선택하여 복사해 주세요.'); }
   }
   function renderProfiles() {
     if (!root) return;
@@ -237,7 +256,36 @@
         link.target = '_blank'; link.rel = 'noopener noreferrer';
         body.appendChild(link);
       }
-      item.append(thumb, body); return item;
+      const key = role + ':' + (person?.id || '') + ':' + (person?.name || '');
+       const actions = document.createElement('div'); actions.className = 'profile-actions';
+       const detailButton = document.createElement('button');
+       detailButton.type = 'button'; detailButton.className = 'profile-description-toggle';
+       const expanded = expandedDescriptions.has(key);
+       detailButton.textContent = expanded ? '설명 닫기' : '설명';
+       detailButton.setAttribute('aria-expanded', String(expanded));
+       actions.appendChild(detailButton);
+       item.append(thumb, body, actions);
+       const section = document.createElement('div'); section.className = 'profile-description';
+       section.hidden = !expanded;
+       const description = String(person?.description || '');
+       const textarea = document.createElement('textarea');
+       textarea.readOnly = true; textarea.value = description;
+       textarea.setAttribute('aria-label', (person?.name || role) + ' 프로필 설명');
+       textarea.placeholder = '프로필 설명을 확인하지 못했습니다.';
+       const copy = document.createElement('button');
+       copy.type = 'button'; copy.textContent = '설명 복사'; copy.disabled = !description.trim();
+       copy.addEventListener('click', () => copyProfileDescription(textarea.value));
+       section.append(textarea, copy);
+       detailButton.addEventListener('click', () => {
+         const show = section.hidden;
+         section.hidden = !show;
+         detailButton.textContent = show ? '설명 닫기' : '설명';
+         detailButton.setAttribute('aria-expanded', String(show));
+         if (show) expandedDescriptions.add(key);
+         else expandedDescriptions.delete(key);
+       });
+       item.appendChild(section);
+       return item;
     }
     holder.appendChild(card(profileState.user, 'user'));
     for (const p of chars) holder.appendChild(card(p, 'character'));
@@ -786,8 +834,8 @@
 :host{--bg:#fff;--muted:#f4f5f7;--ink:#22252b;--sub:#606773;--line:#e2e4e8;--accent:#405a85;--accent-ink:#fff;color-scheme:light;font:13px/1.5 system-ui,-apple-system,sans-serif}
 :host([data-effective="dark"]){--bg:#25262b;--muted:#30323a;--ink:#f4f4f6;--sub:#b9bdc7;--line:#494b54;--accent:#7e9dd5;--accent-ink:#18202f;color-scheme:dark}
 *{box-sizing:border-box}button,input,textarea{font:inherit}button{cursor:pointer}button:disabled{opacity:.45;cursor:default}button:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
-[hidden]{display:none!important}#launch{position:fixed;z-index:2147483625;border:1px solid var(--line);border-radius:999px;background:var(--bg);color:var(--ink);padding:.64em .9em;box-shadow:0 4px 16px #0003;white-space:nowrap;touch-action:none;user-select:none;min-width:70px}
-#launch .zsh-count{margin-left:6px;color:var(--accent);font-weight:700}
+[hidden]{display:none!important}#launch{position:fixed;display:flex;align-items:center;justify-content:center;gap:5px;text-align:center;z-index:2147483625;border:1px solid var(--line);border-radius:999px;background:var(--bg);color:var(--ink);padding:.64em .9em;box-shadow:0 4px 16px #0003;white-space:nowrap;touch-action:none;user-select:none;min-width:70px}
+#launch .zsh-count{color:var(--accent);font-weight:700}
 #panel{position:fixed;z-index:2147483630;background:var(--bg);color:var(--ink);border:1px solid var(--line);box-shadow:0 10px 38px #0005;border-radius:15px;overflow:hidden;min-width:280px;min-height:250px;display:flex;flex-direction:column}
 #head{display:flex;align-items:center;gap:10px;background:var(--muted);padding:11px 13px;border-bottom:1px solid var(--line);touch-action:none;cursor:move;user-select:none;flex:none}#head strong{font-size:14px;flex:1}#head .version{font-size:11px;color:var(--sub)}
 #head button{font-size:12px;background:var(--bg);color:var(--ink);border:1px solid var(--line);padding:5px 10px;border-radius:8px}
@@ -796,7 +844,12 @@
 #status{white-space:pre-wrap;padding:9px 10px;border:1px solid var(--line);border-radius:9px;background:var(--muted);color:var(--sub);min-height:40px;font-size:12px}
 .stats{display:flex;gap:8px;margin:10px 0}.stat{flex:1;background:var(--muted);border-radius:9px;padding:10px}.stat small{display:block;color:var(--sub)}.stat strong{display:block;font-size:19px}
 #preview{resize:vertical;width:100%;min-height:148px;max-height:430px;white-space:pre-wrap;background:var(--muted);border:1px solid var(--line);color:var(--ink);border-radius:9px;padding:10px;font:12px/1.6 ui-monospace,SFMono-Regular,monospace}
-#summary{font-size:12px;color:var(--sub)}.profile-card{display:flex;gap:10px;align-items:center;border:1px solid var(--line);border-radius:10px;padding:9px;margin:8px 0;background:var(--muted);min-width:0}.profile-thumb{width:58px;height:58px;min-width:58px;border-radius:9px;background:var(--bg);display:flex;justify-content:center;align-items:center;overflow:hidden;color:var(--sub);text-align:center;font-size:10px}.profile-thumb img{width:100%;height:100%;object-fit:cover}.profile-details{display:flex;flex-direction:column;gap:3px;min-width:0;overflow-wrap:anywhere}.profile-details strong{font-size:12px}.profile-details small{font-size:11px;color:var(--sub)}.profile-details a{font-size:11px;color:var(--accent);text-decoration:underline}.note{font-size:11px;color:var(--sub)}.settings{border-top:1px solid var(--line);margin-top:18px;padding-top:8px}.settings label{display:block;margin:9px 0 4px}.settings input[type="text"]{width:100%;padding:7px;border-radius:7px;background:var(--bg);border:1px solid var(--line);color:var(--ink)}.settings input[type="range"]{width:100%;accent-color:var(--accent)}
+#summary{font-size:12px;color:var(--sub)}.profile-card{display:flex;flex-wrap:wrap;gap:10px;align-items:center;border:1px solid var(--line);border-radius:10px;padding:9px;margin:8px 0;background:var(--muted);min-width:0}.profile-thumb{width:58px;height:58px;min-width:58px;border-radius:9px;background:var(--bg);display:flex;justify-content:center;align-items:center;overflow:hidden;color:var(--sub);text-align:center;font-size:10px}.profile-thumb img{width:100%;height:100%;object-fit:cover}.profile-details{display:flex;flex:1;flex-direction:column;gap:3px;min-width:0;overflow-wrap:anywhere}.profile-details strong{font-size:12px}.profile-details small{font-size:11px;color:var(--sub)}.profile-details a{font-size:11px;color:var(--accent);text-decoration:underline}
+.profile-actions{margin-left:auto;flex:none}
+.profile-description-toggle,.profile-description button{border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink);padding:6px 9px;min-height:32px;font-size:11px}
+.profile-description{flex:0 0 100%;min-width:0;display:flex;flex-direction:column;gap:7px;border-top:1px solid var(--line);padding-top:9px}
+.profile-description textarea{width:100%;min-height:90px;max-height:240px;resize:vertical;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink);padding:9px;white-space:pre-wrap;font:12px/1.5 system-ui,-apple-system,sans-serif}
+.profile-description button{align-self:flex-end}.note{font-size:11px;color:var(--sub);white-space:pre-line}.settings{border-top:1px solid var(--line);margin-top:18px;padding-top:8px}.settings label{display:block;margin:9px 0 4px}.settings input[type="text"]{width:100%;padding:7px;border-radius:7px;background:var(--bg);border:1px solid var(--line);color:var(--ink)}.settings input[type="range"]{width:100%;accent-color:var(--accent)}
 .segment{display:flex;gap:3px;padding:3px;background:var(--muted);border:1px solid var(--line);border-radius:10px}.segment button{flex:1;padding:6px 3px!important;font-size:12px;background:transparent!important;border:0!important;border-radius:8px!important}.segment button[aria-pressed="true"]{background:var(--bg)!important;box-shadow:0 1px 3px #0002}
 #resize{position:absolute;right:3px;bottom:2px;width:30px;height:27px;display:grid;place-items:center;cursor:nwse-resize;touch-action:none;color:var(--sub);font-size:21px;user-select:none}
 #tip{position:fixed;z-index:2147483646;top:calc(env(safe-area-inset-top,0px) + 16px);left:50%;transform:translateX(-50%);border-radius:10px;max-width:min(90vw,420px);padding:9px 13px;background:#263b33;border:1px solid #60c99e;color:#fff;box-shadow:0 4px 12px #0003;text-align:center;pointer-events:none}
@@ -815,7 +868,7 @@
   <p class="note">원본 메시지 단위만 선택합니다. 말풍선을 누르면 그 원본 메시지 전체가 선택됩니다. 다시 누르면 해제됩니다.</p>
   <div class="row"><button id="start" class="primary" type="button">말풍선 직접 선택</button><button id="clear" type="button">선택 해제</button></div>
   <h3>프로필 사진 자동 감지</h3>
-   <p class="note">현재 채팅방의 유저·캐릭터 사진을 확인합니다. 유저 사진이 미확인이라면 채팅 메뉴에서 [대화 프로필]을 열고 아래 새로고침을 누르세요. 프로필 변경은 수행하지 않습니다.</p>
+   <p class="note">현재 채팅방의 유저·캐릭터 사진을 확인합니다.\n[프로필 새로고침]을 눌러주세요.</p>
    <div class="row"><button id="refresh-profiles" type="button">프로필 새로고침</button></div>
    <p id="profile-status" class="note" aria-live="polite">아직 감지된 프로필 없음</p>
    <div id="profile-cards"></div>
@@ -823,7 +876,7 @@
   <p id="summary" aria-live="polite">선택한 메시지가 없습니다.</p>
   <textarea id="preview" readonly placeholder="선택한 원본 메시지가 여기에 표시됩니다."></textarea>
   <div class="row"><span id="chars" class="note">0자</span><button id="copy" type="button">선택 원문 복사</button></div>
-  <p class="note">현재는 0.2.0 개발판입니다. 이미지 클립보드 복사, 1인·2인·다인 모드 및 프롬프트 생성은 후속 버전에 추가됩니다.</p>
+  <p class="note">현재는 0.2.1 개발판입니다. 이미지 클립보드 복사, 1인·2인·다인 모드 및 프롬프트 생성은 후속 버전에 추가됩니다.</p>
   <div class="settings"><h3>설정</h3><label for="size">실행 버튼 크기 <span id="size-val">100%</span></label><input id="size" type="range" min="65" max="155" step="5">
    <label for="btn-label">실행 버튼 표시 (글자·이모지)</label><input id="btn-label" type="text" maxlength="36" placeholder="🖼️">
    <label>테마 &gt; 화면 모드</label><div class="segment" role="group" aria-label="화면 모드"><button type="button" data-theme="light">라이트 모드</button><button type="button" data-theme="dark">다크 모드</button><button type="button" data-theme="system">기기 설정</button></div>

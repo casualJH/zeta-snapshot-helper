@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         제타 짤뽑 도우미
 // @namespace    zeta-snapshot-helper
-// @version      0.2.1
+// @version      0.2.2
 // @description  원본 메시지 직접 선택 · 유저/캐릭터 프로필 사진 감지 및 미리보기 (개발판)
 // @author       casualJH
 // @homepageURL  https://github.com/casualJH/zeta-snapshot-helper
@@ -15,7 +15,7 @@
 // ==/UserScript==
 (function () {
   'use strict';
-  const VERSION = '0.2.1';
+  const VERSION = '0.2.2';
   const FRAME_ORIGIN = 'https://frame.pingpong.ai';
   const API_ORIGIN = 'https://api.zeta-ai.io';
   const PROTOCOL = 'zeta-snapshot-helper:selection:v1';
@@ -87,6 +87,9 @@
   const profileState = {room: room, user: null, userStatus: '미확인', characters: [], candidates: [], plotId: null, source: '', updatedAt: 0};
   let profileRefreshBusy = false, lastFrameSnapshot = '', profileEpoch = 0;
   const expandedDescriptions = new Set();
+  const plotIntroductions = new Map();
+  const screenDescriptions = new Map();
+  let descriptionReadScheduled = false;
   const attemptedPersonas = new Set();
   const IMAGE_KEYS = ['avatarUrl', 'avatar_url', 'profileImageUrl', 'profile_image_url', 'imageUrl', 'image_url', 'thumbnailUrl', 'thumbnail_url'];
   function cleanImage(value) {
@@ -112,12 +115,59 @@
     profileState.room = currentRoom(); profileState.user = null; profileState.userStatus = '미확인';
     profileState.characters = []; profileState.candidates = []; profileState.plotId = null;
     profileState.source = ''; profileState.updatedAt = 0; lastFrameSnapshot = ''; attemptedPersonas.clear();
-    expandedDescriptions.clear();
+    expandedDescriptions.clear(); plotIntroductions.clear(); screenDescriptions.clear();
     renderProfiles();
+  }
+  function collectVisibleProfileDescription() {
+    if (!document.body || !currentRoom()) return;
+    const characters = profileState.characters, candidates = [];
+    for (const title of document.querySelectorAll('h3, [role="heading"]')) {
+      if (!title.getClientRects().length) continue;
+      const name = String(title.textContent || '').trim();
+      if (!name || characters.filter(c => c.name.trim() === name).length !== 1) continue;
+      const header = title.parentElement;
+      const close = header?.querySelector('button[aria-label="Close"], button[aria-label="닫기"]');
+      if (!close?.getClientRects().length) continue;
+      const overlay = header.parentElement;
+      if (!overlay || overlay.closest('[aria-hidden="true"], [hidden]')) continue;
+      const sections = [...overlay.children].filter(section => section !== header && section.getClientRects().length);
+      const known = sections.filter(section => section.matches('[data-sentry-component="CharacterDescription"]'));
+      for (const section of known.length ? known : sections) {
+        const body = section.matches('.whitespace-pre-wrap') ? section : section.querySelector('.whitespace-pre-wrap');
+        if (!body || !body.getClientRects().length || body.closest('[aria-hidden="true"], [hidden]')) continue;
+        const description = String(body.innerText || '').trim();
+        if (description) candidates.push({name, description: description.slice(0, 30000)});
+      }
+    }
+    if (candidates.length !== 1) return;
+    const {name, description} = candidates[0];
+    if (screenDescriptions.get(name) !== description) {
+      screenDescriptions.set(name, description);
+      renderProfiles();
+    }
+  }
+  function scheduleProfileDescriptionRead() {
+    if (descriptionReadScheduled) return;
+    descriptionReadScheduled = true;
+    setTimeout(() => {
+      descriptionReadScheduled = false;
+      collectVisibleProfileDescription();
+    }, 180);
   }
   function observeProfilePayload(path, payload, sourceRoom) {
     if (!sourceRoom || sourceRoom !== currentRoom() || !payload || typeof payload !== 'object') return;
     const pathname = String(path).replace(/\/$/, '');
+    const plotDetail = /^\/v1\/plots\/([0-9a-f-]{36})$/i.exec(pathname);
+    if (plotDetail && plotDetail[1] === profileState.plotId && payload.id === profileState.plotId &&
+        Array.isArray(payload.about?.characters)) {
+      plotIntroductions.clear();
+      for (const item of payload.about.characters) {
+        if (item && typeof item.characterId === 'string' && typeof item.description === 'string' && item.description.trim())
+          plotIntroductions.set(item.characterId, item.description.slice(0, 30000));
+      }
+      renderProfiles();
+      return;
+    }
     if (pathname === `/v1/rooms/${sourceRoom}` && payload.plot && typeof payload.plot === 'object') {
       const plot = payload.plot;
       const characters = Array.isArray(plot.characters) ? plot.characters : null;
@@ -125,7 +175,11 @@
         const mapped = characters.map(personFrom).filter(Boolean);
         // Keep the array as provided by the room's plot; never dedupe by name.
         profileState.characters = mapped;
-        profileState.plotId = typeof plot.id === 'string' ? plot.id : null;
+        const nextPlotId = typeof plot.id === 'string' ? plot.id : null;
+        if (profileState.plotId !== nextPlotId) {
+          plotIntroductions.clear(); screenDescriptions.clear();
+        }
+        profileState.plotId = nextPlotId;
         profileState.source = '현재 채팅방 상세 정보';
         profileState.updatedAt = Date.now();
         tryAutoPersona(sourceRoom, profileState.plotId);
@@ -159,7 +213,8 @@
     const parsed = parseUrl(url); if (!parsed || parsed.origin !== API_ORIGIN) return;
     const path = parsed.pathname;
     if (!(path.replace(/\/$/,'') === `/v1/rooms/${sourceRoom}` ||
-      /^\/v1\/plots\/[^/]+\/rooms\/[^/]+\/user-personas\/(select|selected)\/?$/.test(path))) return;
+      /^\/v1\/plots\/[^/]+\/rooms\/[^/]+\/user-personas\/(select|selected)\/?$/.test(path) ||
+      /^\/v1\/plots\/[0-9a-f-]{36}\/?$/i.test(path))) return;
     if (Number(response.headers.get('content-length')) > 900000) return;
     const epoch = profileEpoch;
     try {
@@ -172,7 +227,8 @@
     const parsed = parseUrl(url); if (!parsed || parsed.origin !== API_ORIGIN) return;
     const path = parsed.pathname;
     if (!(path.replace(/\/$/,'') === `/v1/rooms/${sourceRoom}` ||
-      /^\/v1\/plots\/[^/]+\/rooms\/[^/]+\/user-personas\/(select|selected)\/?$/.test(path))) return;
+      /^\/v1\/plots\/[^/]+\/rooms\/[^/]+\/user-personas\/(select|selected)\/?$/.test(path) ||
+      /^\/v1\/plots\/[0-9a-f-]{36}\/?$/i.test(path))) return;
     try {
       const json = xhr.responseType === 'json' ? xhr.response :
         (!xhr.responseType || xhr.responseType === 'text') && xhr.responseText.length < 900000 ? JSON.parse(xhr.responseText) : null;
@@ -205,7 +261,9 @@
       const matches = profileState.candidates.filter(p => p.name === c.name);
       const unambiguousName = selected.filter(person => person.name === c.name).length === 1;
       const fallback = unambiguousName && matches.length === 1 ? matches[0].image : '';
-      return {...c, image: c.image || fallback};
+      return {...c, image: c.image || fallback,
+        description: (unambiguousName && screenDescriptions.get(c.name)) ||
+          (c.id && plotIntroductions.get(c.id)) || c.description || ''};
     });
     // No room detail: only show displayed chat avatars as *unverified* candidates.
     return profileState.candidates.map(c => ({...c, id:'', candidate:true}));
@@ -304,6 +362,15 @@
             headers:{...headers}, credentials:'include', cache:'no-store'});
           if (response.ok) { await readProfileResponse(response, response.url, target); roomResult = '채팅방 정보 조회 완료'; }
           else roomResult = `채팅방 조회 HTTP ${response.status}`;
+          const plotId = profileState.plotId;
+          if (generationAtStart === profileEpoch && target === currentRoom() &&
+              plotId && /^[0-9a-f-]{36}$/i.test(plotId)) {
+            try {
+              const plotResponse = await nativeFetch.call(window, `${API_ORIGIN}/v1/plots/${plotId}`, {
+                headers:{...headers}, credentials:'include', cache:'no-store'});
+              if (plotResponse.ok) await readProfileResponse(plotResponse, plotResponse.url, target);
+            } catch (_) { /* Plot introduction data is optional. */ }
+          }
         } catch (_) { roomResult = '채팅방 조회 실패'; }
       } else roomResult = '대화방을 새로고침해 인증 요청 감지 필요';
       const frame = chatFrame();
@@ -317,8 +384,10 @@
           } catch (_) { frameResult = '화면 프로필 조회 실패'; }
         } else { frameResult = 'iframe 연결 미확인'; showAccess(); }
       } else frameResult = '채팅 iframe 없음';
-      if (target === currentRoom() && generationAtStart === profileEpoch)
+      if (target === currentRoom() && generationAtStart === profileEpoch) {
+        collectVisibleProfileDescription();
         setInfo(`프로필 새로고침: ${roomResult} · ${frameResult}`);
+      }
     } finally { profileRefreshBusy = false; renderProfiles(); }
   }
   async function requestProfileFrame(frame, targetRoom) {
@@ -424,6 +493,14 @@
     syncFrame(); render();
   }
   window.addEventListener('popstate', roomChanged);
+  function watchProfilePanels() {
+    if (!document.body) return;
+    new MutationObserver(scheduleProfileDescriptionRead).observe(document.body, {childList:true,subtree:true});
+    scheduleProfileDescriptionRead();
+  }
+  if (document.readyState === 'loading')
+    document.addEventListener('DOMContentLoaded', watchProfilePanels, {once:true});
+  else watchProfilePanels();
   window.addEventListener('hashchange', roomChanged);
   setInterval(() => {
     roomChanged();
@@ -711,6 +788,7 @@
     launch.style.left = `${ui.buttonX}px`; launch.style.top = `${ui.buttonY}px`;
     launch.style.fontSize = `${Math.round(13 * ui.buttonSize / 100)}px`;
     launch.querySelector('.zsh-text').textContent = ui.buttonLabel.trim() || '🖼️';
+    launch.dataset.jhDockIcon = '🖼️';
     panel.style.left = `${ui.panelX}px`; panel.style.top = `${ui.panelY}px`;
     panel.style.width = `${ui.panelW}px`; panel.style.height = `${ui.panelH}px`;
     root.getElementById('size').value = String(ui.buttonSize);
@@ -835,7 +913,9 @@
 :host([data-effective="dark"]){--bg:#25262b;--muted:#30323a;--ink:#f4f4f6;--sub:#b9bdc7;--line:#494b54;--accent:#7e9dd5;--accent-ink:#18202f;color-scheme:dark}
 *{box-sizing:border-box}button,input,textarea{font:inherit}button{cursor:pointer}button:disabled{opacity:.45;cursor:default}button:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 [hidden]{display:none!important}#launch{position:fixed;display:flex;align-items:center;justify-content:center;gap:5px;text-align:center;z-index:2147483625;border:1px solid var(--line);border-radius:999px;background:var(--bg);color:var(--ink);padding:.64em .9em;box-shadow:0 4px 16px #0003;white-space:nowrap;touch-action:none;user-select:none;min-width:70px}
+#launch .zsh-text{display:inline-block;text-align:center}
 #launch .zsh-count{color:var(--accent);font-weight:700}
+#launch .zsh-count:empty{display:none}
 #panel{position:fixed;z-index:2147483630;background:var(--bg);color:var(--ink);border:1px solid var(--line);box-shadow:0 10px 38px #0005;border-radius:15px;overflow:hidden;min-width:280px;min-height:250px;display:flex;flex-direction:column}
 #head{display:flex;align-items:center;gap:10px;background:var(--muted);padding:11px 13px;border-bottom:1px solid var(--line);touch-action:none;cursor:move;user-select:none;flex:none}#head strong{font-size:14px;flex:1}#head .version{font-size:11px;color:var(--sub)}
 #head button{font-size:12px;background:var(--bg);color:var(--ink);border:1px solid var(--line);padding:5px 10px;border-radius:8px}
@@ -876,7 +956,7 @@
   <p id="summary" aria-live="polite">선택한 메시지가 없습니다.</p>
   <textarea id="preview" readonly placeholder="선택한 원본 메시지가 여기에 표시됩니다."></textarea>
   <div class="row"><span id="chars" class="note">0자</span><button id="copy" type="button">선택 원문 복사</button></div>
-  <p class="note">현재는 0.2.1 개발판입니다. 이미지 클립보드 복사, 1인·2인·다인 모드 및 프롬프트 생성은 후속 버전에 추가됩니다.</p>
+  <p class="note">현재는 0.2.2 개발판입니다. 이미지 클립보드 복사, 1인·2인·다인 모드 및 프롬프트 생성은 후속 버전에 추가됩니다.</p>
   <div class="settings"><h3>설정</h3><label for="size">실행 버튼 크기 <span id="size-val">100%</span></label><input id="size" type="range" min="65" max="155" step="5">
    <label for="btn-label">실행 버튼 표시 (글자·이모지)</label><input id="btn-label" type="text" maxlength="36" placeholder="🖼️">
    <label>테마 &gt; 화면 모드</label><div class="segment" role="group" aria-label="화면 모드"><button type="button" data-theme="light">라이트 모드</button><button type="button" data-theme="dark">다크 모드</button><button type="button" data-theme="system">기기 설정</button></div>

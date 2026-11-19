@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         제타 짤뽑 도우미
 // @namespace    zeta-snapshot-helper
-// @version      0.4.6
+// @version      0.4.7
 // @description  1인 스냅샷 프롬프트 생성 · 원본 메시지 선택 · 프로필 감지 (개발판)
 // @author       casualJH
 // @homepageURL  https://github.com/casualJH/zeta-snapshot-helper
@@ -15,7 +15,7 @@
 // ==/UserScript==
 (function () {
   'use strict';
-  const VERSION = '0.4.6';
+  const VERSION = '0.4.7';
   const FRAME_ORIGIN = 'https://frame.pingpong.ai';
   const API_ORIGIN = 'https://api.zeta-ai.io';
   const PROTOCOL = 'zeta-snapshot-helper:selection:v1';
@@ -464,8 +464,8 @@
     const raw=includeChat?selectedRaw():'';
     if(includeChat&&!raw.trim()){flash('첨부할 대화를 선택해 주세요.');return;}
     const text=root.getElementById('snapshot-user-input').value;
-    const additions=text.trim()?'추가사항: '+text+'\n\n':'';
-    const conversation=raw.trim()?'다음은 두 캐릭터의 대사와 행동지문이다.\n[대화내용]\n\n'+raw+'\n\n':'';
+    const additions=text.trim()?'[추가사항]\n\n'+text+'\n\n':'';
+    const conversation=raw.trim()?'[대화 원문]\n\n'+raw+'\n\n':'';
     const result=conversation+additions+formatSceneReferenceBlock(people);
     root.getElementById('snapshot-output').value=result;
     generatedRoom=currentRoom();saveModeDraft();updateSnapshotControls();
@@ -522,10 +522,10 @@
       flash('첨부할 대화를 선택해 주세요.');return;
     }
     const chatBlock=raw.trim()
-      ? '다음은 두 캐릭터의 대사와 행동지문이다.\n[대화내용]\n\n'+raw+'\n\n'
+      ? '[대화 원문]\n\n'+raw+'\n\n'
       : '';
     const userInput=root.getElementById('snapshot-user-input').value;
-    const formattedInput=userInput.trim()?'추가사항: '+userInput:'';
+    const formattedInput=userInput.trim()?'[추가사항]\n\n'+userInput:'';
     const url=subject.person?.image||'';
     const result=SOLO_SNAPSHOT_TEMPLATE
       .replace('{{CHAT_BLOCK}}',chatBlock)

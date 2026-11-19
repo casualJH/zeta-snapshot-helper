@@ -424,7 +424,7 @@
   function selectedScenePeople(characters=profileCandidates()) {
     if(scene.mode==='1') {
       if(scene.solo==='user')return [{role:'유저',person:profileState.user}];
-      const match=/^char:(\\d+)$/.exec(scene.solo);
+      const match=/^char:(\d+)$/.exec(scene.solo);
       const person=match?characters[Number(match[1])]:null;
       return person?[{role:'캐릭터',person}]:[];
     }
@@ -444,10 +444,10 @@
     return people;
   }
   function formatSceneReferenceBlock(people) {
-    return '[등장인물 및 참조 이미지]\\n\\n'+people.map(({role,person},i)=>{
+    return '[등장인물 및 참조 이미지]\n\n'+people.map(({role,person},i)=>{
       const name=person?.name|| (role==='유저'?'유저 프로필 미확인':'캐릭터 이름 미확인');
-      return '첨부사진'+(i+1)+'\\n이름: '+name+'\\n이미지 URL: '+(person?.image||'사진 미확인');
-    }).join('\\n\\n');
+      return '첨부사진'+(i+1)+'\n이름: '+name+'\n이미지 URL: '+(person?.image||'사진 미확인');
+    }).join('\n\n');
   }
   function generateSceneReferences() {
     const people=selectedScenePeople();
@@ -461,8 +461,8 @@
     const raw=includeChat?selectedRaw():'';
     if(includeChat&&!raw.trim()){flash('첨부할 대화를 선택해 주세요.');return;}
     const text=root.getElementById('snapshot-user-input').value;
-    const additions=text.trim()?'내용/분위기 : '+text+'\\n\\n':'';
-    const conversation=raw.trim()?'다음은 두 캐릭터의 대사와 행동지문이다.\\n[대화내용]\\n\\n'+raw+'\\n\\n':'';
+    const additions=text.trim()?'내용/분위기 : '+text+'\n\n':'';
+    const conversation=raw.trim()?'다음은 두 캐릭터의 대사와 행동지문이다.\n[대화내용]\n\n'+raw+'\n\n':'';
     const result=conversation+additions+formatSceneReferenceBlock(people);
     root.getElementById('snapshot-output').value=result;
     generatedRoom=currentRoom();saveModeDraft();updateSnapshotControls();

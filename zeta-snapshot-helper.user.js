@@ -998,3 +998,30 @@
         const port = e.ports[0];
         port.postMessage({protocol:PROTOCOL, nonce:e.data.nonce, ok:true, snapshot:takeProfileSnapshot()});
         port.close();
+      } else if (e.data.type === 'state') {
+        const next = e.data.state;
+        if (!next || !Array.isArray(next.known) || !Array.isArray(next.chosen)) return;
+        enabled = next.enabled === true;
+        known = new Set(next.known.filter(s => typeof s === 'string'));
+        selected = new Set(next.chosen.filter(s => typeof s === 'string'));
+        schedule();
+      }
+    });
+    function ready() {
+      if (!document.body) return;
+      const observer = new MutationObserver(entries => {
+        if (enabled && entries.some(e => !e.target?.closest?.('#zsh-selected-overlay'))) schedule();
+      });
+      observer.observe(document.body, {childList: true, subtree: true});
+      const profileObserver = new MutationObserver(() => {
+        clearTimeout(profileObserver.timer);
+        profileObserver.timer = setTimeout(sendProfileSnapshot, 300);
+      });
+      profileObserver.observe(document.body, {childList:true, subtree:true, attributes:true,
+        attributeFilter:['src','class','disabled','aria-label']});
+      window.parent.postMessage({protocol: PROTOCOL, type: 'ready'}, origin);
+    }
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', ready, {once: true});
+    else ready();
+  }
+})();

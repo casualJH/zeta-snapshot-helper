@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         제타 짤뽑 도우미
 // @namespace    zeta-snapshot-helper
-// @version      0.4.5
+// @version      0.4.6
 // @description  1인 스냅샷 프롬프트 생성 · 원본 메시지 선택 · 프로필 감지 (개발판)
 // @author       casualJH
 // @homepageURL  https://github.com/casualJH/zeta-snapshot-helper
@@ -15,7 +15,7 @@
 // ==/UserScript==
 (function () {
   'use strict';
-  const VERSION = '0.4.5';
+  const VERSION = '0.4.6';
   const FRAME_ORIGIN = 'https://frame.pingpong.ai';
   const API_ORIGIN = 'https://api.zeta-ai.io';
   const PROTOCOL = 'zeta-snapshot-helper:selection:v1';
@@ -464,7 +464,7 @@
     const raw=includeChat?selectedRaw():'';
     if(includeChat&&!raw.trim()){flash('첨부할 대화를 선택해 주세요.');return;}
     const text=root.getElementById('snapshot-user-input').value;
-    const additions=text.trim()?'내용/분위기 : '+text+'\n\n':'';
+    const additions=text.trim()?'추가사항: '+text+'\n\n':'';
     const conversation=raw.trim()?'다음은 두 캐릭터의 대사와 행동지문이다.\n[대화내용]\n\n'+raw+'\n\n':'';
     const result=conversation+additions+formatSceneReferenceBlock(people);
     root.getElementById('snapshot-output').value=result;
@@ -525,7 +525,7 @@
       ? '다음은 두 캐릭터의 대사와 행동지문이다.\n[대화내용]\n\n'+raw+'\n\n'
       : '';
     const userInput=root.getElementById('snapshot-user-input').value;
-    const formattedInput=userInput.trim()?'내용/분위기 : '+userInput:'';
+    const formattedInput=userInput.trim()?'추가사항: '+userInput:'';
     const url=subject.person?.image||'';
     const result=SOLO_SNAPSHOT_TEMPLATE
       .replace('{{CHAT_BLOCK}}',chatBlock)
@@ -1248,16 +1248,16 @@
  display:grid;
  grid-template-columns:58px minmax(0,1fr);
  grid-template-areas:"thumb info" ". actions" "description description";
- column-gap:10px;row-gap:8px;align-items:center;
- border:1px solid var(--line);border-radius:10px;padding:9px;margin:8px 0;
+ column-gap:10px;row-gap:6px;align-items:start;
+ border:1px solid var(--line);border-radius:10px;padding:11px 10px;margin:8px 0;
  background:var(--muted);min-width:0;max-width:100%;
 }
 .profile-thumb{grid-area:thumb;width:58px;height:58px;border-radius:9px;background:var(--bg);display:flex;justify-content:center;align-items:center;overflow:hidden;color:var(--sub);text-align:center;font-size:10px}
 .profile-thumb img{width:100%;height:100%;object-fit:cover}
 .profile-details{grid-area:info;display:flex;flex-direction:column;gap:3px;min-width:0;max-width:100%;word-break:keep-all;overflow-wrap:break-word}
 .profile-details strong{font-size:12px}.profile-details small{font-size:11px;color:var(--sub)}.profile-details a{font-size:11px;color:var(--accent);text-decoration:underline}
-.profile-actions{grid-area:actions;min-width:0;width:100%;display:flex;gap:5px;flex-wrap:wrap;align-items:center;justify-content:flex-start;justify-self:stretch}
-.profile-actions button,.profile-description button{border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink);padding:6px 9px;min-height:32px;font-size:11px;white-space:nowrap;flex:none}
+.profile-actions{grid-area:actions;min-width:0;width:100%;display:flex;gap:5px;flex-wrap:wrap;align-items:center;justify-content:flex-start;justify-self:stretch;margin:0;padding:0}
+.profile-actions button,.profile-description button{border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink);padding:4px 7px;min-height:28px;font-size:11px;line-height:1.3;white-space:nowrap;flex:none}
 .profile-actions .profile-description-toggle{order:3}
 .profile-description{grid-area:description;min-width:0;display:flex;flex-direction:column;gap:7px;border-top:1px solid var(--line);padding-top:9px}
 /* Compact: keep actions directly below the image-view link in the info column.

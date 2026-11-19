@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         제타 짤뽑 도우미
 // @namespace    zeta-snapshot-helper
-// @version      0.3.4
+// @version      0.3.5
 // @description  원본 메시지 직접 선택 · 유저/캐릭터 프로필 사진 감지 및 미리보기 (개발판)
 // @author       casualJH
 // @homepageURL  https://github.com/casualJH/zeta-snapshot-helper
@@ -15,7 +15,7 @@
 // ==/UserScript==
 (function () {
   'use strict';
-  const VERSION = '0.3.4';
+  const VERSION = '0.3.5';
   const FRAME_ORIGIN = 'https://frame.pingpong.ai';
   const API_ORIGIN = 'https://api.zeta-ai.io';
   const PROTOCOL = 'zeta-snapshot-helper:selection:v1';
@@ -1058,7 +1058,7 @@
 .profile-card{
  display:grid;
  grid-template-columns:58px minmax(0,1fr);
- grid-template-areas:"thumb info" "actions actions" "description description";
+ grid-template-areas:"thumb info" ". actions" "description description";
  column-gap:10px;row-gap:8px;align-items:center;
  border:1px solid var(--line);border-radius:10px;padding:9px;margin:8px 0;
  background:var(--muted);min-width:0;max-width:100%;
@@ -1071,7 +1071,7 @@
 .profile-actions button,.profile-description button{border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink);padding:6px 9px;min-height:32px;font-size:11px;white-space:nowrap;flex:none}
 .profile-actions .profile-description-toggle{order:3}
 .profile-description{grid-area:description;min-width:0;display:flex;flex-direction:column;gap:7px;border-top:1px solid var(--line);padding-top:9px}
-/* Compact: photo and identity at top; actions align left on the second row.
+/* Compact: keep actions directly below the image-view link in the info column.
    Wide: photo, identity and actions share one row, with actions aligned right. */
 @container zsh-profiles (min-width:370px){
  .profile-card{

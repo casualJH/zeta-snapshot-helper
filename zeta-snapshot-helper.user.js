@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         제타 짤뽑 도우미
 // @namespace    zeta-snapshot-helper
-// @version      0.2.2
+// @version      0.3.0
 // @description  원본 메시지 직접 선택 · 유저/캐릭터 프로필 사진 감지 및 미리보기 (개발판)
 // @author       casualJH
 // @homepageURL  https://github.com/casualJH/zeta-snapshot-helper
@@ -15,7 +15,7 @@
 // ==/UserScript==
 (function () {
   'use strict';
-  const VERSION = '0.2.2';
+  const VERSION = '0.3.0';
   const FRAME_ORIGIN = 'https://frame.pingpong.ai';
   const API_ORIGIN = 'https://api.zeta-ai.io';
   const PROTOCOL = 'zeta-snapshot-helper:selection:v1';
@@ -87,6 +87,7 @@
   const profileState = {room: room, user: null, userStatus: '미확인', characters: [], candidates: [], plotId: null, source: '', updatedAt: 0};
   let profileRefreshBusy = false, lastFrameSnapshot = '', profileEpoch = 0;
   const expandedDescriptions = new Set();
+  const scene={mode:'2',solo:'user',pair:0,multiUser:true,multi:new Set(),initialized:false};
   const plotIntroductions = new Map();
   const screenDescriptions = new Map();
   let descriptionReadScheduled = false;
@@ -116,6 +117,7 @@
     profileState.characters = []; profileState.candidates = []; profileState.plotId = null;
     profileState.source = ''; profileState.updatedAt = 0; lastFrameSnapshot = ''; attemptedPersonas.clear();
     expandedDescriptions.clear(); plotIntroductions.clear(); screenDescriptions.clear();
+    scene.pair=0;scene.multiUser=true;scene.multi.clear();scene.initialized=false;
     renderProfiles();
   }
   function collectVisibleProfileDescription() {
@@ -268,6 +270,123 @@
     // No room detail: only show displayed chat avatars as *unverified* candidates.
     return profileState.candidates.map(c => ({...c, id:'', candidate:true}));
   }
+
+  async function writeText(text) {
+    if(navigator.clipboard?.writeText) return navigator.clipboard.writeText(text);
+    const t=document.createElement('textarea');t.value=text;t.style.cssText='position:fixed;left:-9999px';
+    root.appendChild(t);
+    try {t.focus();t.select();if(!document.execCommand('copy'))throw Error('Copy denied');}
+    finally{t.remove();}
+  }
+  async function copyProfileUrl(url,name) {
+    try {await writeText(url);flash(name+' · 이미지 URL을 복사했습니다.');}
+    catch(_){flash('URL 복사 실패 · 이미지 보기 링크에서 직접 복사해 주세요.');}
+  }
+  async function toPng(url) {
+    const response=await fetch(url,{mode:'cors',credentials:'omit'});
+    if(!response.ok)throw Error('Image fetch failed');
+    const blob=await response.blob();
+    if(blob.type==='image/png')return blob;
+    let bitmap=null,el=null,objectUrl='';
+    try {
+      if(typeof createImageBitmap==='function')try{bitmap=await createImageBitmap(blob);}catch(_){}
+      if(!bitmap) {
+        objectUrl=URL.createObjectURL(blob);
+        el=await new Promise((resolve,reject)=>{
+          const img=new Image();img.onload=()=>resolve(img);img.onerror=reject;img.src=objectUrl;
+        });
+      }
+      const w=bitmap?bitmap.width:el.naturalWidth,h=bitmap?bitmap.height:el.naturalHeight;
+      if(!w||!h)throw Error('Invalid image');
+      const ratio=Math.min(1,4096/Math.max(w,h));
+      const canvas=document.createElement('canvas');
+      canvas.width=Math.max(1,Math.round(w*ratio));canvas.height=Math.max(1,Math.round(h*ratio));
+      const ctx=canvas.getContext('2d');if(!ctx)throw Error('Canvas unavailable');
+      ctx.drawImage(bitmap||el,0,0,canvas.width,canvas.height);
+      return await new Promise((resolve,reject)=>
+        canvas.toBlob(data=>data?resolve(data):reject(Error('Conversion failed')),'image/png'));
+    } finally {bitmap?.close?.();if(objectUrl)URL.revokeObjectURL(objectUrl);}
+  }
+  async function copyProfileImage(url,name) {
+    if(!navigator.clipboard?.write||typeof ClipboardItem==='undefined'){
+      flash('이미지 복사 미지원 · URL 복사를 사용해 주세요.');return;
+    }
+    try {
+      const promise=toPng(url);
+      await navigator.clipboard.write([new ClipboardItem({'image/png':promise})]);
+      flash(name+' · 이미지 복사 완료');
+    } catch(_){flash('이미지 복사 실패 · URL 복사를 사용해 주세요.');}
+  }
+  function renderSceneModes(characters=profileCandidates()) {
+    if(!root)return;
+    const host=root.getElementById('scene-controls'),preview=root.getElementById('scene-summary');
+    if(!host||!preview)return;
+    if(!scene.initialized&&characters.length) {
+      scene.multi=new Set(characters.map((_,i)=>i));scene.initialized=true;
+    }
+    host.replaceChildren();
+    const tabs=document.createElement('div');tabs.className='scene-tabs';
+    for(const [mode,label] of [['1','1인'],['2','2인'],['multi','다인']]){
+      const button=document.createElement('button');button.textContent=label;button.type='button';
+      button.setAttribute('aria-pressed',String(scene.mode===mode));
+      button.addEventListener('click',()=>{scene.mode=mode;renderSceneModes();});
+      tabs.appendChild(button);
+    }
+    host.appendChild(tabs);
+    const options=document.createElement('div');options.className='scene-pickers';
+    const addOption=(select,value,label)=>select.appendChild(new Option(label,value));
+    if(scene.mode==='1'){
+      const select=document.createElement('select');select.setAttribute('aria-label','1인 촬영 대상');
+      addOption(select,'user','유저');
+      characters.forEach((c,i)=>addOption(select,'char:'+i,c.name||'캐릭터 '+(i+1)));
+      if(scene.solo!=='user'&&!characters[Number(scene.solo.split(':')[1])])scene.solo='user';
+      select.value=scene.solo;
+      select.addEventListener('change',()=>{scene.solo=select.value;renderSceneModes();});
+      options.appendChild(select);
+    }else if(scene.mode==='2'){
+      const caption=document.createElement('span');caption.textContent='유저 + 캐릭터 1명';
+      const select=document.createElement('select');select.setAttribute('aria-label','2인 모드 캐릭터');
+      characters.forEach((c,i)=>addOption(select,String(i),c.name||'캐릭터 '+(i+1)));
+      if(characters.length){scene.pair=Math.min(scene.pair,characters.length-1);select.value=String(scene.pair);}
+      else addOption(select,'','캐릭터 미확인');
+      select.disabled=!characters.length;
+      select.addEventListener('change',()=>{scene.pair=Number(select.value)||0;renderSceneModes();});
+      options.append(caption,select);
+    }else{
+      const box=(label,checked,change)=>{
+        const row=document.createElement('label');row.className='scene-checkbox';
+        const input=document.createElement('input');input.type='checkbox';input.checked=checked;
+        const span=document.createElement('span');span.textContent=label;
+        input.addEventListener('change',()=>{change(input.checked);renderSceneModes();});
+        row.append(input,span);return row;
+      };
+      options.appendChild(box('유저 포함',scene.multiUser,value=>{scene.multiUser=value;}));
+      characters.forEach((c,i)=>options.appendChild(box(c.name||'캐릭터 '+(i+1),
+        scene.multi.has(i),value=>value?scene.multi.add(i):scene.multi.delete(i))));
+    }
+    host.appendChild(options);
+    const participants=[];
+    if(scene.mode==='1'){
+      if(scene.solo==='user')participants.push(['유저',profileState.user]);
+      else{const char=characters[Number(scene.solo.split(':')[1])];if(char)participants.push(['캐릭터',char]);}
+    }else if(scene.mode==='2'){
+      participants.push(['유저',profileState.user]);
+      if(characters[scene.pair])participants.push(['캐릭터',characters[scene.pair]]);
+    }else{
+      if(scene.multiUser)participants.push(['유저',profileState.user]);
+      characters.forEach((c,i)=>{if(scene.multi.has(i))participants.push(['캐릭터',c]);});
+    }
+    preview.replaceChildren();
+    const title=document.createElement('strong');title.textContent='포함 인물 '+participants.length+'명';preview.appendChild(title);
+    participants.forEach(([role,person],i)=>{
+      const line=document.createElement('div');
+      line.textContent='첨부사진'+(i+1)+' — '+(person?.name||(role==='유저'?'유저 프로필 미확인':'캐릭터 미확인'))+
+        ' ('+role+') · '+(person?.image?'사진 확인됨':'사진 미확인');
+      preview.appendChild(line);
+    });
+    if(!participants.length)preview.appendChild(document.createTextNode('선택된 인물이 없습니다.'));
+  }
+
   async function copyProfileDescription(value) {
     if (!value.trim()) { setInfo('복사할 프로필 설명을 확인하지 못했습니다.'); return; }
     try {
@@ -322,6 +441,15 @@
        detailButton.textContent = expanded ? '설명 닫기' : '설명';
        detailButton.setAttribute('aria-expanded', String(expanded));
        actions.appendChild(detailButton);
+       if(person?.image) {
+         const imageButton=document.createElement('button');
+         imageButton.type='button';imageButton.textContent='이미지 복사';
+         imageButton.addEventListener('click',()=>copyProfileImage(person.image,person.name||role));
+         const urlButton=document.createElement('button');
+         urlButton.type='button';urlButton.textContent='URL 복사';
+         urlButton.addEventListener('click',()=>copyProfileUrl(person.image,person.name||role));
+         actions.append(imageButton,urlButton);
+       }
        item.append(thumb, body, actions);
        const section = document.createElement('div'); section.className = 'profile-description';
        section.hidden = !expanded;
@@ -347,6 +475,7 @@
     }
     holder.appendChild(card(profileState.user, 'user'));
     for (const p of chars) holder.appendChild(card(p, 'character'));
+    renderSceneModes(chars);
   }
   async function refreshProfiles() {
     roomChanged();
@@ -925,11 +1054,19 @@
 .stats{display:flex;gap:8px;margin:10px 0}.stat{flex:1;background:var(--muted);border-radius:9px;padding:10px}.stat small{display:block;color:var(--sub)}.stat strong{display:block;font-size:19px}
 #preview{resize:vertical;width:100%;min-height:148px;max-height:430px;white-space:pre-wrap;background:var(--muted);border:1px solid var(--line);color:var(--ink);border-radius:9px;padding:10px;font:12px/1.6 ui-monospace,SFMono-Regular,monospace}
 #summary{font-size:12px;color:var(--sub)}.profile-card{display:flex;flex-wrap:wrap;gap:10px;align-items:center;border:1px solid var(--line);border-radius:10px;padding:9px;margin:8px 0;background:var(--muted);min-width:0}.profile-thumb{width:58px;height:58px;min-width:58px;border-radius:9px;background:var(--bg);display:flex;justify-content:center;align-items:center;overflow:hidden;color:var(--sub);text-align:center;font-size:10px}.profile-thumb img{width:100%;height:100%;object-fit:cover}.profile-details{display:flex;flex:1;flex-direction:column;gap:3px;min-width:0;overflow-wrap:anywhere}.profile-details strong{font-size:12px}.profile-details small{font-size:11px;color:var(--sub)}.profile-details a{font-size:11px;color:var(--accent);text-decoration:underline}
-.profile-actions{margin-left:auto;flex:none}
-.profile-description-toggle,.profile-description button{border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink);padding:6px 9px;min-height:32px;font-size:11px}
+.profile-actions{margin-left:auto;flex:none;display:flex;gap:5px;flex-wrap:wrap;justify-content:flex-end}
+.profile-actions button,.profile-description button{border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink);padding:6px 9px;min-height:32px;font-size:11px}
 .profile-description{flex:0 0 100%;min-width:0;display:flex;flex-direction:column;gap:7px;border-top:1px solid var(--line);padding-top:9px}
 .profile-description textarea{width:100%;min-height:90px;max-height:240px;resize:vertical;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink);padding:9px;white-space:pre-wrap;font:12px/1.5 system-ui,-apple-system,sans-serif}
 .profile-description button{align-self:flex-end}.note{font-size:11px;color:var(--sub);white-space:pre-line}.settings{border-top:1px solid var(--line);margin-top:18px;padding-top:8px}.settings label{display:block;margin:9px 0 4px}.settings input[type="text"]{width:100%;padding:7px;border-radius:7px;background:var(--bg);border:1px solid var(--line);color:var(--ink)}.settings input[type="range"]{width:100%;accent-color:var(--accent)}
+.scene-tabs{display:flex;gap:3px;border-radius:10px;border:1px solid var(--line);background:var(--muted);padding:3px}
+.scene-tabs button{flex:1!important;border:0!important;background:transparent!important;border-radius:8px!important}
+.scene-tabs button[aria-pressed="true"]{background:var(--bg)!important;box-shadow:0 1px 4px #0002}
+.scene-pickers{display:flex;flex-direction:column;gap:9px;margin:10px 0}
+.scene-pickers select{width:100%;background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:8px}
+.scene-checkbox{display:flex;gap:8px;align-items:center}.scene-checkbox input{accent-color:var(--accent);width:17px;height:17px}
+.scene-summary{padding:10px;margin:8px 0 16px;border:1px solid var(--line);background:var(--muted);border-radius:9px;color:var(--sub);font-size:11px}
+.scene-summary strong{display:block;color:var(--ink);font-size:12px;margin-bottom:5px}
 .segment{display:flex;gap:3px;padding:3px;background:var(--muted);border:1px solid var(--line);border-radius:10px}.segment button{flex:1;padding:6px 3px!important;font-size:12px;background:transparent!important;border:0!important;border-radius:8px!important}.segment button[aria-pressed="true"]{background:var(--bg)!important;box-shadow:0 1px 3px #0002}
 #resize{position:absolute;right:3px;bottom:2px;width:30px;height:27px;display:grid;place-items:center;cursor:nwse-resize;touch-action:none;color:var(--sub);font-size:21px;user-select:none}
 #tip{position:fixed;z-index:2147483646;top:calc(env(safe-area-inset-top,0px) + 16px);left:50%;transform:translateX(-50%);border-radius:10px;max-width:min(90vw,420px);padding:9px 13px;background:#263b33;border:1px solid #60c99e;color:#fff;box-shadow:0 4px 12px #0003;text-align:center;pointer-events:none}
@@ -949,14 +1086,17 @@
   <div class="row"><button id="start" class="primary" type="button">말풍선 직접 선택</button><button id="clear" type="button">선택 해제</button></div>
   <h3>프로필 사진 자동 감지</h3>
    <p class="note">현재 채팅방의 유저·캐릭터 사진을 확인합니다.\n[프로필 새로고침]을 눌러주세요.</p>
-   <div class="row"><button id="refresh-profiles" type="button">프로필 새로고침</button></div>
+   <div class="row"><button id="refresh-profiles" class="primary" type="button">프로필 새로고침</button></div>
    <p id="profile-status" class="note" aria-live="polite">아직 감지된 프로필 없음</p>
    <div id="profile-cards"></div>
+    <h3>장면 인원수</h3>
+    <p class="note">1인: 유저 또는 캐릭터 · 2인: 유저 + 캐릭터 1명 · 다인: 제한 없음</p>
+    <div id="scene-controls"></div><div id="scene-summary" class="scene-summary" aria-live="polite"></div>
    <h3>선택 대화 원문</h3>
   <p id="summary" aria-live="polite">선택한 메시지가 없습니다.</p>
   <textarea id="preview" readonly placeholder="선택한 원본 메시지가 여기에 표시됩니다."></textarea>
   <div class="row"><span id="chars" class="note">0자</span><button id="copy" type="button">선택 원문 복사</button></div>
-  <p class="note">현재는 0.2.2 개발판입니다. 이미지 클립보드 복사, 1인·2인·다인 모드 및 프롬프트 생성은 후속 버전에 추가됩니다.</p>
+  <p class="note">현재는 0.3.0 개발판입니다. 인원수 선택, 이미지 복사 및 URL 복사가 추가되었습니다. 전용 프롬프트는 추후 제공되는 템플릿에 맞춰 적용합니다.</p>
   <div class="settings"><h3>설정</h3><label for="size">실행 버튼 크기 <span id="size-val">100%</span></label><input id="size" type="range" min="65" max="155" step="5">
    <label for="btn-label">실행 버튼 표시 (글자·이모지)</label><input id="btn-label" type="text" maxlength="36" placeholder="🖼️">
    <label>테마 &gt; 화면 모드</label><div class="segment" role="group" aria-label="화면 모드"><button type="button" data-theme="light">라이트 모드</button><button type="button" data-theme="dark">다크 모드</button><button type="button" data-theme="system">기기 설정</button></div>

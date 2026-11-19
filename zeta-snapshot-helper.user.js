@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         제타 짤뽑 도우미
 // @namespace    zeta-snapshot-helper
-// @version      0.4.11
+// @version      0.4.12
 // @description  1인 스냅샷 프롬프트 생성 · 원본 메시지 선택 · 프로필 감지 (개발판)
 // @author       casualJH
 // @homepageURL  https://github.com/casualJH/zeta-snapshot-helper
@@ -15,7 +15,7 @@
 // ==/UserScript==
 (function () {
   'use strict';
-  const VERSION = '0.4.11';
+  const VERSION = '0.4.12';
   const FRAME_ORIGIN = 'https://frame.pingpong.ai';
   const API_ORIGIN = 'https://api.zeta-ai.io';
   const PROTOCOL = 'zeta-snapshot-helper:selection:v1';
@@ -498,10 +498,10 @@
     toggle.disabled=false;
     root.getElementById('snapshot-template-note').hidden=one;
     toggle.setAttribute('aria-pressed',String(includeChat));
-    toggle.textContent=includeChat?'대화내용 첨부 해제':'대화내용 첨부';
+    toggle.textContent=includeChat?'대화 내용 첨부 해제':'대화 내용 첨부';
     copy.disabled=!output.value.trim();
     const count=loaded.filter(x=>chosen.has(x.id)).length;
-    label.textContent=includeChat?'선택 메시지 '+count+'개 · 생성 시 대화내용 삽입':'대화내용은 선택적으로 첨부합니다.';
+    label.textContent=includeChat?'선택 메시지 '+count+'개 · 생성 시 대화 내용 삽입':'';
   }
   function toggleSnapshotChat() {
     if(!includeChat&&!selectedRaw().trim()) {
@@ -1260,8 +1260,8 @@
 .profile-details{grid-area:info;display:flex;flex-direction:column;gap:3px;min-width:0;max-width:100%;word-break:keep-all;overflow-wrap:break-word}
 .profile-details strong{font-size:12px}.profile-details small{font-size:11px;color:var(--sub)}.profile-details a{font-size:11px;color:var(--accent);text-decoration:underline}
 .profile-actions{grid-area:actions;min-width:0;width:100%;display:flex;gap:5px;flex-wrap:wrap;align-items:center;justify-content:flex-start;justify-self:stretch;align-self:start;margin:0;padding:0}
-#scroll .profile-actions button{border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink);padding:4px 7px;min-height:30px;font-size:11px;line-height:1.3;white-space:nowrap;flex:none}
-#scroll .profile-description button{border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink);padding:4px 7px;min-height:30px;font-size:11px;line-height:1.3;white-space:nowrap;flex:none}
+#scroll .profile-actions button{border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink);padding:4px 7px;min-height:32px;font-size:11px;line-height:1.3;white-space:nowrap;flex:none}
+#scroll .profile-description button{border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink);padding:4px 7px;min-height:32px;font-size:11px;line-height:1.3;white-space:nowrap;flex:none}
 .profile-actions .profile-description-toggle{order:3}
 .profile-description{grid-area:description;min-width:0;display:flex;flex-direction:column;gap:7px;border-top:1px solid var(--line);padding-top:9px}
 /* Compact: keep actions directly below the image-view link in the info column.
@@ -1274,7 +1274,7 @@
  }
  .profile-card.has-description{grid-template-areas:"thumb info actions" "description description description"}
  .profile-actions{width:auto;justify-self:end;justify-content:flex-end;flex-wrap:nowrap;align-self:center}
- #scroll .profile-actions button{padding-inline:5px;font-size:10px;min-height:30px}
+ #scroll .profile-actions button{padding-inline:5px;font-size:10px;min-height:32px}
 }
 .profile-description textarea{width:100%;min-height:90px;max-height:240px;resize:vertical;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink);padding:9px;white-space:pre-wrap;font:12px/1.5 system-ui,-apple-system,sans-serif}
 .profile-description button{align-self:flex-end}.note{font-size:11px;color:var(--sub);white-space:pre-line}.settings{border-top:1px solid var(--line);margin-top:18px;padding-top:8px}.settings label{display:block;margin:9px 0 4px}.settings input[type="text"]{width:100%;padding:7px;border-radius:7px;background:var(--bg);border:1px solid var(--line);color:var(--ink)}.settings input[type="range"]{width:100%;accent-color:var(--accent)}
@@ -1300,8 +1300,8 @@
 .snapshot-step-generate{margin-top:18px}
 #snapshot-workflow label[for="snapshot-user-input"],#snapshot-workflow label[for="snapshot-output"]{display:block;margin:8px 0 6px}
 #snapshot-user-input{min-height:115px}
-#snapshot-attach-info{flex:1;min-width:140px}
-#scroll #refresh-profiles,#scroll #snapshot-generate,#scroll #snapshot-copy{display:block;width:100%;min-height:44px;margin:0;text-align:center}
+#snapshot-attach-info{flex:1 1 100%;min-width:0}
+#scroll #refresh-profiles,#scroll #snapshot-generate,#scroll #snapshot-copy,#scroll #snapshot-attach{display:block;width:100%;min-height:44px;margin:0;text-align:center;flex:0 0 100%}
 #scroll #load,#scroll #snapshot-attach,#scroll #snapshot-copy{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
 #scroll #copy{margin-left:auto}
 #snapshot-template-note{font-size:11px;color:var(--sub);margin:8px 0}
@@ -1353,7 +1353,7 @@
      <p id="summary" aria-live="polite">선택한 메시지가 없습니다.</p>
      <textarea id="preview" readonly aria-label="선택 대화 원문" placeholder="선택한 원본 메시지가 여기에 표시됩니다."></textarea>
      <div class="row"><span id="chars" class="note">0자</span><button id="copy" type="button">선택 원문 복사</button></div>
-     <div class="row"><button id="snapshot-attach" class="primary" type="button" aria-pressed="false">대화내용 첨부</button><span id="snapshot-attach-info" class="note" aria-live="polite"></span></div>
+     <div class="row"><button id="snapshot-attach" class="primary" type="button" aria-pressed="false">대화 내용 첨부</button><span id="snapshot-attach-info" class="note" aria-live="polite"></span></div>
     </div>
    </details>
    <div class="snapshot-step snapshot-step-generate">4. 프롬프트 생성</div>

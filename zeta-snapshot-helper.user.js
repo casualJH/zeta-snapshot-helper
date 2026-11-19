@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         제타 짤뽑 도우미
 // @namespace    zeta-snapshot-helper
-// @version      0.4.0
+// @version      0.4.1
 // @description  1인 스냅샷 프롬프트 생성 · 원본 메시지 선택 · 프로필 감지 (개발판)
 // @author       casualJH
 // @homepageURL  https://github.com/casualJH/zeta-snapshot-helper
@@ -15,7 +15,7 @@
 // ==/UserScript==
 (function () {
   'use strict';
-  const VERSION = '0.4.0';
+  const VERSION = '0.4.1';
   const FRAME_ORIGIN = 'https://frame.pingpong.ai';
   const API_ORIGIN = 'https://api.zeta-ai.io';
   const PROTOCOL = 'zeta-snapshot-helper:selection:v1';
@@ -329,7 +329,14 @@
   function renderSceneModes(characters=profileCandidates()) {
     if(!root)return;
     const host=root.getElementById('scene-controls'),preview=root.getElementById('scene-summary');
-    if(!host||!preview)return;
+    const soloPicker=root.getElementById('snapshot-person-picker');
+    const soloSummary=root.getElementById('snapshot-solo-summary');
+    const otherSummary=root.getElementById('scene-other-summary');
+    const soloSection=root.getElementById('snapshot-solo-section');
+    if(!host||!preview||!soloPicker||!soloSummary||!otherSummary||!soloSection)return;
+    soloSection.hidden=scene.mode!=='1';
+    soloPicker.replaceChildren();
+    (scene.mode==='1'?soloSummary:otherSummary).appendChild(preview);
     if(!scene.initialized&&characters.length) {
       scene.multi=new Set(characters.map((_,i)=>i));scene.initialized=true;
     }
@@ -351,7 +358,7 @@
       if(scene.solo!=='user'&&!characters[Number(scene.solo.split(':')[1])])scene.solo='user';
       select.value=scene.solo;
       select.addEventListener('change',()=>{scene.solo=select.value;renderSceneModes();updateSnapshotControls();});
-      options.appendChild(select);
+      soloPicker.appendChild(select);
     }else if(scene.mode==='2'){
       const caption=document.createElement('span');caption.textContent='유저 + 캐릭터 1명';
       const select=document.createElement('select');select.setAttribute('aria-label','2인 모드 캐릭터');
@@ -373,7 +380,7 @@
       characters.forEach((c,i)=>options.appendChild(box(c.name||'캐릭터 '+(i+1),
         scene.multi.has(i),value=>value?scene.multi.add(i):scene.multi.delete(i))));
     }
-    host.appendChild(options);
+    if(scene.mode!=='1')host.appendChild(options);
     const participants=[];
     if(scene.mode==='1'){
       if(scene.solo==='user')participants.push(['유저',profileState.user]);
@@ -1178,7 +1185,25 @@
 .scene-tabs button{flex:1!important;border:0!important;background:transparent!important;border-radius:8px!important}
 .scene-tabs button[aria-pressed="true"]{background:var(--bg)!important;box-shadow:0 1px 4px #0002}
 .scene-pickers{display:flex;flex-direction:column;gap:9px;margin:10px 0}
-.scene-pickers select{width:100%;background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:8px}
+.scene-pickers select,#snapshot-person-picker select{display:block;width:100%;min-width:0;min-height:48px;appearance:auto;-webkit-appearance:menulist;background:var(--muted);color:var(--ink);border:1px solid var(--line);border-radius:10px;padding:11px 12px;font:14px/1.5 system-ui,-apple-system,sans-serif}
+#snapshot-person-picker{margin:9px 0 0}
+#snapshot-solo-section{min-width:0}
+#snapshot-solo-section h3{margin-top:18px}
+.snapshot-step{margin:17px 0 9px;font-size:13px;font-weight:700;color:var(--ink)}
+#snapshot-chat-section{margin:16px 0;border:1px solid var(--line);border-radius:10px;background:var(--muted);overflow:hidden}
+#snapshot-chat-section>summary{cursor:pointer;list-style:none;display:flex;align-items:center;justify-content:space-between;gap:8px;min-height:48px;padding:12px 13px;font-size:13px;font-weight:700;color:var(--ink)}
+#snapshot-chat-section>summary::-webkit-details-marker{display:none}
+#snapshot-chat-section>summary:after{content:'⌄';font-size:20px;line-height:1;color:var(--sub);transition:transform .15s ease}
+#snapshot-chat-section[open]>summary:after{transform:rotate(180deg)}
+.snapshot-chat-body{border-top:1px solid var(--line);padding:12px;background:var(--bg);min-width:0}
+.snapshot-chat-body .stats{margin:9px 0}
+.snapshot-chat-body #preview{min-height:120px}
+.snapshot-step-generate{margin-top:18px}
+#snapshot-solo-section label[for="snapshot-user-input"],#snapshot-solo-section label[for="snapshot-output"]{display:block;margin:8px 0 6px}
+#snapshot-user-input{min-height:115px}
+#snapshot-attach-info{flex:1;min-width:140px}
+#scene-other-summary:empty{display:none}
+
 .scene-checkbox{display:flex;gap:8px;align-items:center}.scene-checkbox input{accent-color:var(--accent);width:17px;height:17px}
 .scene-summary{padding:10px;margin:8px 0 16px;border:1px solid var(--line);background:var(--muted);border-radius:9px;color:var(--sub);font-size:11px}
 .scene-summary strong{display:block;color:var(--ink);font-size:12px;margin-bottom:5px}
@@ -1192,35 +1217,42 @@
 <section id="panel" hidden aria-label="제타 짤뽑 도우미">
  <header id="head"><strong>제타 짤뽑 도우미</strong><span class="version">v${VERSION}</span><button id="close" type="button">닫기</button></header>
  <div id="scroll">
-  <h3>대화 불러오기</h3>
-  <div id="status" role="status"></div>
-  <div class="stats"><div class="stat"><small>불러온 원본 메시지</small><strong id="collected">0개</strong></div><div class="stat"><small>선택한 원본 메시지</small><strong id="selected">0개</strong></div></div>
-  <div class="row"><button id="load" type="button">과거 대화 불러오기</button><button id="stop" type="button">중지</button></div>
-  <h3>말풍선 직접 선택</h3>
-  <p class="note">원본 메시지 단위만 선택합니다. 말풍선을 누르면 그 원본 메시지 전체가 선택됩니다. 다시 누르면 해제됩니다.</p>
-  <div class="row"><button id="start" class="primary" type="button">말풍선 직접 선택</button><button id="clear" type="button">선택 해제</button></div>
   <h3>프로필 사진 자동 감지</h3>
-   <p class="note">현재 채팅방의 유저·캐릭터 사진을 확인합니다.\n[프로필 새로고침]을 눌러주세요.</p>
-   <div class="row"><button id="refresh-profiles" class="primary" type="button">프로필 새로고침</button></div>
-   <p id="profile-status" class="note" aria-live="polite">아직 감지된 프로필 없음</p>
-   <div id="profile-cards"></div>
-    <h3>장면 인원수</h3>
-    <p class="note">1인: 유저 또는 캐릭터 · 2인: 유저 + 캐릭터 1명 · 다인: 제한 없음</p>
-    <div id="scene-controls"></div><div id="scene-summary" class="scene-summary" aria-live="polite"></div>
-    <h3>1인 스냅샷 프롬프트</h3>
-    <p class="note">1인 모드에서 인물의 사진 URL이 자동 삽입됩니다. 사용자 입력은 비어 있어도 됩니다.</p>
-    <label for="snapshot-user-input">스냅샷 내용 / 분위기</label>
-    <textarea id="snapshot-user-input" placeholder="예: 카페 창가에 앉아 책을 읽는 장면, 따뜻하고 잔잔한 분위기"></textarea>
-    <div class="row"><button id="snapshot-attach" type="button" aria-pressed="false">대화내용 첨부</button><span id="snapshot-attach-info" class="note" aria-live="polite"></span></div>
-    <div class="row"><button id="snapshot-generate" class="primary" type="button">프롬프트 생성</button></div>
-    <label for="snapshot-output">프롬프트 미리보기 (수정 가능)</label>
-    <textarea id="snapshot-output" placeholder="프롬프트를 생성한 후 직접 수정할 수 있습니다."></textarea>
-    <div class="row"><button id="snapshot-copy" type="button">프롬프트 복사</button></div>
-   <h3>선택 대화 원문</h3>
-  <p id="summary" aria-live="polite">선택한 메시지가 없습니다.</p>
-  <textarea id="preview" readonly placeholder="선택한 원본 메시지가 여기에 표시됩니다."></textarea>
-  <div class="row"><span id="chars" class="note">0자</span><button id="copy" type="button">선택 원문 복사</button></div>
-  <p class="note">현재는 0.4.0 개발판입니다. 1인 스냅샷 프롬프트 생성 기능을 테스트합니다. 2인·다인 프롬프트는 후속 버전에서 추가됩니다.</p>
+  <p class="note">현재 채팅방의 유저·캐릭터 사진을 확인합니다.\n[프로필 새로고침]을 눌러주세요.</p>
+  <div class="row"><button id="refresh-profiles" class="primary" type="button">프로필 새로고침</button></div>
+  <p id="profile-status" class="note" aria-live="polite">아직 감지된 프로필 없음</p>
+  <div id="profile-cards"></div>
+  <h3>장면 인원수</h3>
+  <div id="scene-controls"></div>
+  <div id="scene-other-summary"></div>
+  <section id="snapshot-solo-section">
+   <h3>1인 스냅샷 프롬프트</h3>
+   <div class="snapshot-step">1. 인물 선택</div>
+   <div id="snapshot-person-picker"></div>
+   <div id="snapshot-solo-summary"><div id="scene-summary" class="scene-summary" aria-live="polite"></div></div>
+   <div class="snapshot-step">2. 추가사항(내용 / 분위기) 입력</div>
+   <textarea id="snapshot-user-input" aria-label="추가사항(내용 / 분위기) 입력" placeholder="예: 카페 창가에서 책을 읽는 장면, 따뜻하고 잔잔한 분위기"></textarea>
+   <details id="snapshot-chat-section">
+    <summary>3. 대화 내용 첨부</summary>
+    <div class="snapshot-chat-body">
+     <div id="status" role="status"></div>
+     <div class="stats"><div class="stat"><small>불러온 원본 메시지</small><strong id="collected">0개</strong></div><div class="stat"><small>선택한 원본 메시지</small><strong id="selected">0개</strong></div></div>
+     <div class="row"><button id="load" type="button">과거 대화 불러오기</button><button id="stop" type="button">중지</button></div>
+     <p class="note">원본 메시지 단위만 선택합니다. 말풍선을 누르면 전체 원본 메시지가 선택됩니다. 다시 누르면 해제됩니다.</p>
+     <div class="row"><button id="start" class="primary" type="button">말풍선 직접 선택</button><button id="clear" type="button">선택 해제</button></div>
+     <p id="summary" aria-live="polite">선택한 메시지가 없습니다.</p>
+     <textarea id="preview" readonly aria-label="선택 대화 원문" placeholder="선택한 원본 메시지가 여기에 표시됩니다."></textarea>
+     <div class="row"><span id="chars" class="note">0자</span><button id="copy" type="button">선택 원문 복사</button></div>
+     <div class="row"><button id="snapshot-attach" type="button" aria-pressed="false">대화내용 첨부</button><span id="snapshot-attach-info" class="note" aria-live="polite"></span></div>
+    </div>
+   </details>
+   <div class="snapshot-step snapshot-step-generate">4. 프롬프트 생성</div>
+   <div class="row"><button id="snapshot-generate" class="primary" type="button">프롬프트 생성</button></div>
+   <label for="snapshot-output">프롬프트 미리보기 (수정 가능)</label>
+   <textarea id="snapshot-output" placeholder="프롬프트를 생성한 후 직접 수정할 수 있습니다."></textarea>
+   <div class="row"><button id="snapshot-copy" type="button">프롬프트 복사</button></div>
+  </section>
+  <p class="note">현재는 0.4.1 개발판입니다. 1인 스냅샷 프롬프트 생성 기능을 테스트합니다. 2인·다인 프롬프트는 후속 버전에서 추가됩니다.</p>
   <div class="settings"><h3>설정</h3><label for="size">실행 버튼 크기 <span id="size-val">100%</span></label><input id="size" type="range" min="65" max="155" step="5">
    <label for="btn-label">실행 버튼 표시 (글자·이모지)</label><input id="btn-label" type="text" maxlength="36" placeholder="🖼️">
    <label>테마 &gt; 화면 모드</label><div class="segment" role="group" aria-label="화면 모드"><button type="button" data-theme="light">라이트 모드</button><button type="button" data-theme="dark">다크 모드</button><button type="button" data-theme="system">기기 설정</button></div>

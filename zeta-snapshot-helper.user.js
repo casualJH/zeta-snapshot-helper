@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         제타 짤뽑 도우미
 // @namespace    zeta-snapshot-helper
-// @version      0.6.7
+// @version      0.6.8
 // @description  1인 스냅샷 프롬프트 생성 · 원본 메시지 선택 · 프로필 감지 (개발판)
 // @author       casualJH
 // @homepageURL  https://github.com/casualJH/zeta-snapshot-helper
@@ -15,7 +15,7 @@
 // ==/UserScript==
 (function () {
   'use strict';
-  const VERSION = '0.6.7';
+  const VERSION = '0.6.8';
   const FRAME_ORIGIN = 'https://frame.pingpong.ai';
   const API_ORIGIN = 'https://api.zeta-ai.io';
   const PROTOCOL = 'zeta-snapshot-helper:selection:v1';
@@ -1182,6 +1182,8 @@
     let index = 0;
     for (const msg of raw) {
       if (!msg || typeof msg.id !== 'string') continue;
+      // Only the API's explicit boolean identifies an intro; never infer it from position.
+      const isIntro = msg.isIntro === true;
       const parts = [];
       const role = msg.sender?.type === 'USER' ? 'user' : msg.sender?.type ? 'character' : 'unknown';
       for (const part of Array.isArray(msg.contents) ? msg.contents : []) {
@@ -1193,7 +1195,8 @@
           if (text.trim()) parts.push({speaker: '상태창', text, kind: 'info_box'});
         }
       }
-      if (parts.length) records.push({id: msg.id, time: msg.messageTime || null, role, parts, index: index++});
+      // Keep every API message as one record, even when an intro has many contents.
+      if (parts.length) records.push({id: msg.id, time: msg.messageTime || null, role, isIntro, parts, index: index++});
     }
     records.sort((a, b) => (Date.parse(a.time) || 0) - (Date.parse(b.time) || 0) || a.index - b.index);
     return records;

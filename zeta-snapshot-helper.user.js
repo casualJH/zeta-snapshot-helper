@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         제타 짤뽑 도우미
 // @namespace    zeta-snapshot-helper
-// @version      0.6.6
+// @version      0.6.5
 // @description  1인 스냅샷 프롬프트 생성 · 원본 메시지 선택 · 프로필 감지 (개발판)
 // @author       casualJH
 // @homepageURL  https://github.com/casualJH/zeta-snapshot-helper
@@ -15,7 +15,7 @@
 // ==/UserScript==
 (function () {
   'use strict';
-  const VERSION = '0.6.6';
+  const VERSION = '0.6.5';
   const FRAME_ORIGIN = 'https://frame.pingpong.ai';
   const API_ORIGIN = 'https://api.zeta-ai.io';
   const PROTOCOL = 'zeta-snapshot-helper:selection:v1';
@@ -809,56 +809,30 @@
     updateSnapshotControls();
     flash(url?'1인 스냅샷 프롬프트를 생성했습니다.':'이미지 URL이 미확인입니다. 결과에서 직접 입력할 수 있습니다.');
   }
-  async function selectedPeoplePng(people){
-    // One ClipboardItem is reliably supported on Safari and many other platforms.
-    // For 2+ people, place only the generated prompt's chosen portraits on one PNG sheet.
-    if(people.length===1)return toPng(people[0].image);
-    const sources=await Promise.all(people.map(person=>toPng(person.image)));
-    const cols=people.length<=4?2:people.length<=9?3:4;
-    const rows=Math.ceil(people.length/cols);
-    const maxSide=4096, margin=12, gap=12, labelH=48;
-    const cellW=Math.min(900,Math.floor((maxSide-2*margin-(cols-1)*gap)/cols));
-    const cellH=Math.min(900,Math.floor((maxSide-2*margin-(rows-1)*gap)/rows)-labelH);
-    if(cellW<80||cellH<80)throw Error('참조 이미지가 너무 많습니다.');
-    const canvas=document.createElement('canvas');
-    canvas.width=2*margin+cols*cellW+(cols-1)*gap;
-    canvas.height=2*margin+rows*(cellH+labelH)+(rows-1)*gap;
-    const ctx=canvas.getContext('2d');
-    if(!ctx)throw Error('Canvas not available');
-    ctx.fillStyle='#ffffff';ctx.fillRect(0,0,canvas.width,canvas.height);
-    for(let i=0;i<sources.length;i++){
-      let picture=null,objectUrl='';
-      try{
-        if(typeof createImageBitmap==='function'){
-          try{picture=await createImageBitmap(sources[i]);}catch(_){}
-        }
-        if(!picture){
-          objectUrl=URL.createObjectURL(sources[i]);
-          picture=await new Promise((resolve,reject)=>{
-            const img=new Image();
-            img.onload=()=>resolve(img);img.onerror=()=>reject(Error('Image decode failed'));
-            img.src=objectUrl;
-          });
-        }
-        const width=picture.width||picture.naturalWidth,height=picture.height||picture.naturalHeight;
-        if(!width||!height)throw Error('Invalid reference picture');
-        const x=margin+(i%cols)*(cellW+gap),y=margin+Math.floor(i/cols)*(cellH+labelH+gap);
-        ctx.strokeStyle='#d5d5d5';ctx.lineWidth=1;
-        ctx.strokeRect(x+.5,y+.5,cellW-1,cellH-1);
-        const scale=Math.min(cellW/width,cellH/height);
-        const drawW=Math.max(1,Math.round(width*scale)),drawH=Math.max(1,Math.round(height*scale));
-        ctx.drawImage(picture,x+(cellW-drawW)/2,y+(cellH-drawH)/2,drawW,drawH);
-        ctx.fillStyle='#161616';
-        ctx.font='600 23px system-ui,-apple-system,sans-serif';
-        ctx.fillText('첨부사진'+(i+1),x+5,y+cellH+32,cellW-10);
-      }finally{
-        picture?.close?.();
-        if(objectUrl)URL.revokeObjectURL(objectUrl);
-      }
-    }
-    return new Promise((resolve,reject)=>{
-      canvas.toBlob(blob=>blob?resolve(blob):reject(Error('PNG encoding failed')),'image/png');
+  function escapeClipboardHtml(value){
+    return String(value).replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
+  }
+  async function imageDataUri(url){
+    const png=await toPng(url);
+    const base64=await new Promise((resolve,reject)=>{
+      const reader=new FileReader();
+      reader.onload=()=>resolve(reader.result);
+      reader.onerror=()=>reject(Error('이미지 데이터 인코딩 실패'));
+      reader.readAsDataURL(png);
     });
+    if(typeof base64!=='string'||!base64.startsWith('data:image/png;base64,'))throw Error('이미지 인코딩 실패');
+    return base64;
+  }
+  async function clipboardHtmlForPeople(prompt,people){
+    const images=[];
+    for(let i=0;i<people.length;i++){
+      const person=people[i];
+      if(!person.image)throw Error('첨부사진'+(i+1)+'의 이미지 URL을 찾지 못했습니다.');
+      const uri=await imageDataUri(person.image);
+      images.push('<figure><img alt="'+escapeClipboardHtml('첨부사진'+(i+1)+' '+(person.name||''))+
+        '" src="'+uri+'"></figure>');
+    }
+    return '<html><body>'+images.join('')+'<pre>'+escapeClipboardHtml(prompt)+'</pre></body></html>';
   }
   async function copySoloSnapshot(){
     const field=root.getElementById('snapshot-output');
@@ -869,17 +843,15 @@
     if(people.some(person=>!person.image)){flash('선택한 인물의 프로필 사진이 없습니다. 프로필을 새로고침해 주세요.');return;}
     if(!navigator.clipboard?.write||typeof ClipboardItem==='undefined')return;
     const text=field.value;
-    // Start producing the image during the actual button click, before the
-    // asynchronous Clipboard.write call so Safari retains user activation.
-    const pngPromise=selectedPeoplePng(people);
+    const htmlPromise=clipboardHtmlForPeople(text,people).then(html=>new Blob([html],{type:'text/html'}));
     try{
       await navigator.clipboard.write([new ClipboardItem({
-        'image/png':pngPromise,
+        'text/html':htmlPromise,
         'text/plain':new Blob([text],{type:'text/plain'})
       })]);
       flash('프롬프트와 선택한 프로필 사진 '+people.length+'장을 복사했습니다.');
     }catch(_){
-      // Leave the existing per-person image-copy controls available.
+      // Do not show an unrequested failure message or replace the requested copy operation.
     }
   }
   async function copyProfileDescription(value) {

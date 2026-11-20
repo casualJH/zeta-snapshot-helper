@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         제타 짤뽑 도우미
 // @namespace    zeta-snapshot-helper
-// @version      0.6.12
-// @description  1인 스냅샷 프롬프트 생성 · 원본 메시지 선택 · 프로필 감지 (개발판)
+// @version      1.0.0
+// @description  1인·2인·다인 스냅샷 프롬프트 생성 · 말풍선 선택 · 프로필 사진 복사
 // @author       casualJH
 // @homepageURL  https://github.com/casualJH/zeta-snapshot-helper
 // @updateURL    https://raw.githubusercontent.com/casualJH/zeta-snapshot-helper/main/zeta-snapshot-helper.user.js
@@ -15,7 +15,7 @@
 // ==/UserScript==
 (function () {
   'use strict';
-  const VERSION = '0.6.12';
+  const VERSION = '1.0.0';
   const FRAME_ORIGIN = 'https://frame.pingpong.ai';
   const API_ORIGIN = 'https://api.zeta-ai.io';
   const PROTOCOL = 'zeta-snapshot-helper:selection:v1';

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         제타 짤뽑 도우미
 // @namespace    zeta-snapshot-helper
-// @version      0.6.0
+// @version      0.6.1
 // @description  1인 스냅샷 프롬프트 생성 · 원본 메시지 선택 · 프로필 감지 (개발판)
 // @author       casualJH
 // @homepageURL  https://github.com/casualJH/zeta-snapshot-helper
@@ -15,7 +15,7 @@
 // ==/UserScript==
 (function () {
   'use strict';
-  const VERSION = '0.6.0';
+  const VERSION = '0.6.1';
   const FRAME_ORIGIN = 'https://frame.pingpong.ai';
   const API_ORIGIN = 'https://api.zeta-ai.io';
   const PROTOCOL = 'zeta-snapshot-helper:selection:v1';
@@ -207,6 +207,148 @@
   function appendGptImageUrlRule(prompt){
     return gptImageUrlOnly?prompt+'\n\n'+GPT_IMAGE_URL_SUFFIX:prompt;
   }
+
+  // Saved prompts are independent of the launcher/theme settings and room drafts.
+  const PRESET_KEY='zeta-snapshot-helper:presets:v1';
+  const PRESET_MODES=['1','2','multi'];
+  const builtinPreset=id=>({id:'builtin',mode:id,name:'기본 프롬프트',body:id==='1'?SOLO_SNAPSHOT_TEMPLATE:id==='2'?DUO_SNAPSHOT_TEMPLATE:MULTI_SNAPSHOT_TEMPLATE});
+  function parsePresetData(value){
+    if(!value||typeof value!=='object'||Array.isArray(value))throw Error('프리셋 데이터 형식이 올바르지 않습니다.');
+    if(value.version!==1||!Array.isArray(value.presets)||!value.defaults||typeof value.defaults!=='object')throw Error('프리셋 파일 형식을 확인해 주세요.');
+    if(value.presets.length>100)throw Error('프리셋은 최대 100개까지 저장할 수 있습니다.');
+    const seen=new Set(),presets=[];
+    for(const p of value.presets){
+      if(!p||typeof p!=='object'||!PRESET_MODES.includes(p.mode)||typeof p.id!=='string'||!/^preset-[a-z0-9-]{4,60}$/.test(p.id)||seen.has(p.id)||typeof p.name!=='string'||!p.name.trim()||p.name.length>80||typeof p.body!=='string'||!p.body.trim()||p.body.length>100000)throw Error('프리셋 항목을 확인해 주세요.');
+      seen.add(p.id);
+      presets.push({id:p.id,mode:p.mode,name:p.name.trim(),body:p.body});
+    }
+    const defaults={};
+    for(const mode of PRESET_MODES){
+      const id=value.defaults[mode];
+      defaults[mode]=typeof id==='string'&&presets.some(p=>p.id===id&&p.mode===mode)?id:'builtin';
+    }
+    return {version:1,presets,defaults};
+  }
+  function readPresetData(){
+    try{
+      const value=typeof GM_getValue==='function'?GM_getValue(PRESET_KEY,''):localStorage.getItem(PRESET_KEY);
+      return value?parsePresetData(JSON.parse(value)):{version:1,presets:[],defaults:{'1':'builtin','2':'builtin',multi:'builtin'}};
+    }catch(_){return {version:1,presets:[],defaults:{'1':'builtin','2':'builtin',multi:'builtin'}};}
+  }
+  let presetData=readPresetData();
+  const selectedPresets={...presetData.defaults};
+  let presetEditorId=null;
+  function savePresetData(){
+    const value=JSON.stringify(presetData);
+    try{
+      if(typeof GM_setValue==='function')GM_setValue(PRESET_KEY,value);
+      else localStorage.setItem(PRESET_KEY,value);
+      return true;
+    }catch(_){flash('프리셋 저장에 실패했습니다. 저장 공간을 확인해 주세요.');return false;}
+  }
+  function getSelectedPreset(mode=scene.mode){
+    const id=selectedPresets[mode];
+    return presetData.presets.find(p=>p.mode===mode&&p.id===id)||builtinPreset(mode);
+  }
+  function clearPresetEditor(){
+    if(!root)return;
+    presetEditorId=null;
+    root.getElementById('preset-name').value='';
+    root.getElementById('preset-body').value='';
+    root.getElementById('preset-editor-title').textContent='새 프리셋';
+    root.getElementById('preset-save').textContent='프리셋 저장';
+    root.getElementById('preset-delete').hidden=true;
+  }
+  function editPreset(p){
+    if(!root)return;
+    presetEditorId=p.id==='builtin'?null:p.id;
+    root.getElementById('preset-name').value=p.id==='builtin'?'기본 프롬프트 복제':p.name;
+    root.getElementById('preset-body').value=p.body;
+    root.getElementById('preset-editor-title').textContent=p.id==='builtin'?'기본 프롬프트 복제':p.name+' 편집';
+    root.getElementById('preset-save').textContent=p.id==='builtin'?'새 프리셋으로 저장':'변경사항 저장';
+    root.getElementById('preset-delete').hidden=p.id==='builtin';
+    root.getElementById('preset-manager').open=true;
+  }
+  function renderPresetPicker(){
+    if(!root)return;
+    const row=root.getElementById('preset-segments');
+    if(!row)return;
+    const mode=scene.mode,options=[builtinPreset(mode),...presetData.presets.filter(p=>p.mode===mode)];
+    const selected=getSelectedPreset(mode);
+    row.replaceChildren();
+    for(const p of options){
+      const button=document.createElement('button');
+      button.type='button';button.textContent=p.name;
+      button.className='preset-segment';
+      button.setAttribute('aria-pressed',String(selected.id===p.id));
+      button.title=p.name;
+      button.addEventListener('click',()=>{selectedPresets[mode]=p.id;renderPresetPicker();});
+      row.appendChild(button);
+    }
+    const label=root.getElementById('preset-current');
+    label.textContent='선택: '+selected.name+(selected.id==='builtin'?' (내장 기본)':'');
+    root.getElementById('preset-set-default').disabled=presetData.defaults[mode]===selected.id;
+    root.getElementById('preset-edit').textContent=selected.id==='builtin'?'기본 복제':'편집';
+    // Never silently replace unsaved editor content when switching the preset.
+  }
+  function createPresetId(){
+    const id='preset-'+Date.now().toString(36)+'-'+Math.random().toString(36).slice(2,10);
+    return presetData.presets.some(p=>p.id===id)?createPresetId():id;
+  }
+  function savePresetFromEditor(){
+    const name=root.getElementById('preset-name').value.trim();
+    const body=root.getElementById('preset-body').value.trim();
+    if(!name||name.length>80){flash('프리셋 이름을 1~80자로 입력해 주세요.');return;}
+    if(!body||body.length>100000){flash('프롬프트 본문을 1~100,000자로 입력해 주세요.');return;}
+    const mode=scene.mode;
+    let target=presetData.presets.find(p=>p.id===presetEditorId&&p.mode===mode);
+    if(!target){
+      if(presetData.presets.length>=100){flash('프리셋은 최대 100개까지 저장할 수 있습니다.');return;}
+      target={id:createPresetId(),mode,name,body};presetData.presets.push(target);
+    }else{target.name=name;target.body=body;}
+    if(!savePresetData())return;
+    selectedPresets[mode]=target.id;renderPresetPicker();editPreset(target);
+    flash('프리셋을 저장했습니다.');
+  }
+  function deletePresetFromEditor(){
+    const p=presetData.presets.find(x=>x.id===presetEditorId&&x.mode===scene.mode);
+    if(!p)return;
+    if(!confirm('프리셋 "'+p.name+'"을 삭제할까요?'))return;
+    presetData.presets=presetData.presets.filter(x=>x.id!==p.id);
+    if(presetData.defaults[p.mode]===p.id)presetData.defaults[p.mode]='builtin';
+    if(selectedPresets[p.mode]===p.id)selectedPresets[p.mode]=presetData.defaults[p.mode];
+    if(!savePresetData())return;
+    clearPresetEditor();renderPresetPicker();flash('프리셋을 삭제했습니다.');
+  }
+  function setDefaultPreset(){
+    const mode=scene.mode,p=getSelectedPreset(mode);
+    presetData.defaults[mode]=p.id;
+    if(!savePresetData())return;
+    renderPresetPicker();flash('이 모드의 기본 프리셋으로 설정했습니다.');
+  }
+  function exportPresets(){
+    const json=JSON.stringify(presetData,null,2);
+    const blob=new Blob([json],{type:'application/json;charset=utf-8'});
+    const url=URL.createObjectURL(blob),link=document.createElement('a');
+    link.href=url;link.download='zeta-snapshot-presets-v1.json';
+    document.body.appendChild(link);link.click();link.remove();
+    setTimeout(()=>URL.revokeObjectURL(url),1000);
+  }
+  async function importPresets(file){
+    if(!file)return;
+    if(file.size>11000000){flash('JSON 파일이 너무 큽니다.');return;}
+    try{
+      const next=parsePresetData(JSON.parse(await file.text()));
+      if(!confirm('현재 저장된 사용자 프리셋과 기본 선택 설정을 가져온 파일로 교체할까요?'))return;
+      const previous=presetData;presetData=next;
+      if(!savePresetData()){presetData=previous;return;}
+      for(const mode of PRESET_MODES)selectedPresets[mode]=presetData.defaults[mode];
+      clearPresetEditor();renderPresetPicker();
+      flash('프리셋을 가져왔습니다.');
+    }catch(error){flash('프리셋 가져오기 실패: '+String(error.message||error));}
+    finally{if(root)root.getElementById('preset-import').value='';}
+  }
+
   const modeDrafts=Object.fromEntries(['1','2','multi'].map(k=>[k,{input:'',output:'',includeChat:false,generatedRoom:room}]));
   function saveModeDraft() {
     if(!root)return;
@@ -223,7 +365,7 @@
   }
   function switchSceneMode(mode){
     if(mode===scene.mode)return;
-    saveModeDraft();scene.mode=mode;restoreModeDraft();renderSceneModes();
+    saveModeDraft();scene.mode=mode;restoreModeDraft();clearPresetEditor();renderSceneModes();renderPresetPicker();
   }
   const plotIntroductions = new Map();
   const screenDescriptions = new Map();
@@ -582,7 +724,7 @@
     const text=root.getElementById('snapshot-user-input').value;
     const additions=text.trim()?'[추가사항]\n\n'+text+'\n\n':'';
     const conversation=raw.trim()?'[대화 원문]\n\n'+raw+'\n\n':'';
-    const result=appendGptImageUrlRule(conversation+additions+formatSceneReferenceBlock(people)+'\n\n'+(scene.mode==='2'?DUO_SNAPSHOT_TEMPLATE:MULTI_SNAPSHOT_TEMPLATE));
+    const result=appendGptImageUrlRule(conversation+additions+formatSceneReferenceBlock(people)+'\n\n'+getSelectedPreset().body);
     root.getElementById('snapshot-output').value=result;
     generatedRoom=currentRoom();saveModeDraft();updateSnapshotControls();
     flash(scene.mode==='2'?'2인 스냅샷 프롬프트를 생성했습니다.':'다인 스냅샷 프롬프트를 생성했습니다.');
@@ -645,7 +787,7 @@
     const url=subject.person?.image||'';
     const result=appendGptImageUrlRule(chatBlock+formattedInput+
       formatSceneReferenceBlock([{role:subject.type,person:subject.person}])+
-      '\n\n'+SOLO_SNAPSHOT_TEMPLATE);
+      '\n\n'+getSelectedPreset().body);
     root.getElementById('snapshot-output').value=result;
     generatedRoom=currentRoom();
     saveModeDraft();
@@ -1415,6 +1557,28 @@
 .snapshot-chat-body .stats{margin:9px 0}
 .snapshot-chat-body #preview{min-height:120px}
 .snapshot-step-generate{margin-top:18px}
+
+.preset-area{min-width:0;margin:10px 0 12px}
+.preset-heading{display:flex;justify-content:space-between;gap:8px;align-items:center;font-size:12px;margin-bottom:8px}
+#scroll .preset-heading button{min-height:30px;padding:5px 9px;font-size:11px}
+.preset-segments{display:flex;gap:3px;overflow-x:auto;max-width:100%;min-width:0;padding:4px;background:var(--muted);border:1px solid var(--line);border-radius:11px;scrollbar-width:thin;-webkit-overflow-scrolling:touch}
+#scroll .preset-segment{flex:0 0 auto;max-width:200px;border:0!important;border-radius:8px!important;min-height:36px;padding:7px 12px;background:transparent!important;color:var(--ink)!important;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#scroll .preset-segment[aria-pressed="true"]{background:var(--bg)!important;box-shadow:0 1px 4px #0002;font-weight:700}
+#preset-current{margin:5px 2px 3px!important;font-size:11px}
+.preset-toolbar{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:7px 0}
+#scroll .preset-toolbar button{font-size:11px;min-height:32px;padding:6px 10px}
+.preset-toolbar button:disabled{opacity:.45}
+.preset-manager{border:1px solid var(--line);border-radius:9px;overflow:hidden;margin-top:9px}
+.preset-manager>summary{cursor:pointer;padding:10px 12px;font-size:12px;color:var(--ink);background:var(--muted)}
+.preset-manager-body{padding:11px;display:flex;flex-direction:column;gap:6px;min-width:0}
+.preset-manager-body strong{font-size:12px}
+.preset-manager-body label:not(.preset-import-button){font-size:11px;color:var(--sub)}
+#preset-name,#preset-body{width:100%;min-width:0;border:1px solid var(--line);background:var(--bg);color:var(--ink);border-radius:8px;padding:9px;font:12px/1.5 system-ui,-apple-system,sans-serif}
+#preset-body{resize:vertical;min-height:155px;white-space:pre-wrap}
+.preset-backup{border-top:1px solid var(--line);padding-top:11px;margin-top:6px}
+.preset-import-button{display:inline-flex;align-items:center;padding:6px 10px;border:1px solid var(--line);background:var(--muted);border-radius:8px;color:var(--ink);font-size:11px;min-height:32px;cursor:pointer}
+#preset-import{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none}
+
 .snapshot-gpt-option{display:flex;align-items:center;gap:8px;padding:8px 2px;font-size:12px;color:var(--ink);cursor:pointer}
 .snapshot-gpt-option input{width:17px;height:17px;flex:none;accent-color:var(--accent);margin:0}
 #snapshot-workflow label[for="snapshot-user-input"],#snapshot-workflow label[for="snapshot-output"]{display:block;margin:8px 0 6px}
@@ -1476,6 +1640,29 @@
     </div>
    </details>
    <div class="snapshot-step snapshot-step-generate">4. 프롬프트 생성</div>
+
+    <div class="preset-area">
+     <div class="preset-heading"><strong>프롬프트 프리셋</strong><button id="preset-add" type="button">+ 새 프리셋</button></div>
+     <div id="preset-segments" class="preset-segments" role="group" aria-label="프롬프트 프리셋 선택"></div>
+     <p id="preset-current" class="note" aria-live="polite"></p>
+     <div class="preset-toolbar"><button type="button" id="preset-edit">기본 복제</button><button type="button" id="preset-set-default">기본값 지정</button></div>
+     <details id="preset-manager" class="preset-manager">
+      <summary>프리셋 관리 · 백업</summary>
+      <div class="preset-manager-body">
+       <strong id="preset-editor-title">새 프리셋</strong>
+       <label for="preset-name">프리셋 이름</label>
+       <input id="preset-name" type="text" maxlength="80" placeholder="프리셋 이름">
+       <label for="preset-body">프롬프트 본문</label>
+       <textarea id="preset-body" rows="9" placeholder="프롬프트 전문을 입력하세요."></textarea>
+       <div class="preset-toolbar"><button type="button" id="preset-save" class="primary">프리셋 저장</button><button type="button" id="preset-delete" hidden>삭제</button><button type="button" id="preset-editor-clear">새로 작성</button></div>
+       <div class="preset-backup">
+        <strong>JSON 백업 · 복원</strong>
+        <p class="note">모든 인원수 모드의 사용자 프리셋을 백업합니다. 가져오기는 기존 프리셋을 교체합니다.</p>
+        <div class="preset-toolbar"><button id="preset-export" type="button">JSON 내보내기</button><label class="preset-import-button" for="preset-import">JSON 가져오기</label><input id="preset-import" type="file" accept=".json,application/json"></div>
+       </div>
+      </div>
+     </details>
+    </div>
     <label class="snapshot-gpt-option"><input id="snapshot-gpt-image-url-only" type="checkbox"><span>GPT+이미지 URL만 사용</span></label>
    <p id="snapshot-template-note" class="note" hidden></p>
    <div class="row"><button id="snapshot-generate" class="primary" type="button">프롬프트 생성</button></div>
@@ -1524,6 +1711,15 @@
     root.getElementById('selection-done').addEventListener('click',finishSelectingFromTop);
     root.getElementById('selection-cancel').addEventListener('click',cancelSelectingFromTop);
     root.getElementById('snapshot-attach').addEventListener('click',toggleSnapshotChat);
+    renderPresetPicker();
+    root.getElementById('preset-add').addEventListener('click',()=>{clearPresetEditor();root.getElementById('preset-manager').open=true;});
+    root.getElementById('preset-edit').addEventListener('click',()=>editPreset(getSelectedPreset()));
+    root.getElementById('preset-set-default').addEventListener('click',setDefaultPreset);
+    root.getElementById('preset-save').addEventListener('click',savePresetFromEditor);
+    root.getElementById('preset-delete').addEventListener('click',deletePresetFromEditor);
+    root.getElementById('preset-editor-clear').addEventListener('click',clearPresetEditor);
+    root.getElementById('preset-export').addEventListener('click',exportPresets);
+    root.getElementById('preset-import').addEventListener('change',event=>void importPresets(event.target.files?.[0]));
     root.getElementById('snapshot-gpt-image-url-only').checked=gptImageUrlOnly;
     root.getElementById('snapshot-gpt-image-url-only').addEventListener('change',event=>{
       gptImageUrlOnly=event.currentTarget.checked;savePromptOption();

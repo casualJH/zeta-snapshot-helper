@@ -28,6 +28,70 @@
   const ROOM_PATTERN = /\/rooms\/([0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12})(?:[/?#]|$)/i;
   const ROW_SELECTOR = '[data-index][data-key^="message-MESSAGE-"]';
   const BODY_SELECTOR = '[data-sentry-component="BodyView"]';
+  // zeta-chat-export: direct selection in original API-message units (not turns).
+  const messageId=row=>row.getAttribute('data-key')?.slice('message-'.length)||null;
+  function messageElements(row){
+    const active=row.querySelector('.swiper-slide-active');
+    if(row.querySelector('.swiper-slide')&&!active)return [];
+    const scope=active||row;
+    const bodies=[...scope.querySelectorAll(BODY_SELECTOR)].filter(body=>body.closest(ROW_SELECTOR)===row);
+    if(bodies.length)return bodies;
+    return active?[active]:row.firstElementChild?[row.firstElementChild]:[];
+  }
+  function clickedMessage(event){
+    const target=event.target instanceof Element?event.target:event.target?.parentElement;
+    if(!target||target.closest('a,button,input,textarea,select,[contenteditable="true"]'))return null;
+    const row=target.closest(ROW_SELECTOR);
+    return row&&messageElements(row).some(el=>el.contains(target))?messageId(row):null;
+  }
+  // Borrow zeta-chat-export's message-mode highlight grouping and viewport clipping.
+  function drawMessageOutlines(layer,knownIds,selectedIds){
+    const indices=new Map(knownIds.map((id,index)=>[id,index]));
+    let headerBottom=0;
+    for(const el of document.querySelectorAll('header,[role="banner"],nav')){
+      const rect=el.getBoundingClientRect();
+      if(rect.top>12||rect.bottom<=0||rect.height>180)continue;
+      const position=getComputedStyle(el).position;
+      if(position==='fixed'||position==='sticky')headerBottom=Math.max(headerBottom,rect.bottom);
+    }
+    const top=Math.min(innerHeight,Math.ceil(Math.max(headerBottom,innerWidth<=768?56:0)+5));
+    let bottom=innerHeight;
+    for(const input of document.querySelectorAll('textarea,[contenteditable="true"]')){
+      const rect=input.getBoundingClientRect();
+      if(rect.height>0&&rect.top>innerHeight/2&&rect.top<bottom)bottom=rect.top;
+    }
+    layer.style.clipPath='inset('+top+'px 0px '+Math.max(0,innerHeight-bottom)+'px 0px)';
+    const boxes=[];
+    for(const row of document.querySelectorAll(ROW_SELECTOR)){
+      const id=messageId(row),index=indices.get(id);
+      if(index===undefined||!selectedIds.has(id))continue;
+      for(const body of messageElements(row)){
+        const rect=body.getBoundingClientRect();
+        if(rect.width<=1||rect.height<=1||rect.bottom<=top||rect.top>=bottom)continue;
+        boxes.push({index,left:rect.left,right:rect.right,top:rect.top,bottom:rect.bottom});
+      }
+    }
+    boxes.sort((a,b)=>a.index-b.index||a.top-b.top);
+    const outlines=[];
+    for(const box of boxes){
+      const prev=outlines[outlines.length-1];
+      const merge=!!prev&&box.index<=prev.end+1&&box.top>=prev.bottom-8&&box.top-prev.bottom<=24&&Math.abs(box.left-prev.left)<=32&&Math.abs(box.right-prev.right)<=32;
+      if(!merge){outlines.push({...box,end:box.index});continue;}
+      prev.end=Math.max(prev.end,box.index);
+      prev.left=Math.min(prev.left,box.left);prev.right=Math.max(prev.right,box.right);
+      prev.top=Math.min(prev.top,box.top);prev.bottom=Math.max(prev.bottom,box.bottom);
+    }
+    const fragment=document.createDocumentFragment();
+    for(const box of outlines){
+      const x=Math.max(0,box.left+2),y=Math.max(top,box.top+2),right=Math.min(innerWidth,box.right-2),end=Math.min(bottom,box.bottom-2);
+      if(right<=x||end<=y)continue;
+      const outline=document.createElement('div');
+      outline.style.cssText='position:absolute;box-sizing:border-box;border:3px solid #40c889;border-radius:16px;background:rgba(64,200,137,.055);left:'+x+'px;top:'+y+'px;width:'+(right-x)+'px;height:'+(end-y)+'px';
+      fragment.appendChild(outline);
+    }
+    layer.replaceChildren(fragment);
+  }
+
 
   function isChatFrameUrl(url) {
     return url.origin === FRAME_ORIGIN && /^\/v\d+\/index\.html$/.test(url.pathname);
@@ -94,6 +158,38 @@
   const expandedDescriptions = new Set();
   const scene={mode:'2',solo:'user',pair:0,pairPeople:new Set(['user']),pairInitialized:false,multiUser:true,multi:new Set(),initialized:false};
   let selectionBeforeStart=null;
+  let nativeSelecting=false,nativeOverlay=null,nativeHighlightFrame=0;
+  function scheduleNativeHighlights(){
+    if(!nativeSelecting||nativeHighlightFrame)return;
+    nativeHighlightFrame=requestAnimationFrame(()=>{
+      nativeHighlightFrame=0;
+      if(!nativeSelecting||!document.body)return;
+      if(!nativeOverlay){
+        nativeOverlay=document.createElement('div');
+        nativeOverlay.id='zsh-native-message-overlay';
+        nativeOverlay.setAttribute('aria-hidden','true');
+        nativeOverlay.style.cssText='position:fixed;inset:0;z-index:2147483600;pointer-events:none;overflow:hidden';
+        document.body.appendChild(nativeOverlay);
+      }
+      drawMessageOutlines(nativeOverlay,loaded.map(m=>m.id),chosen);
+    });
+  }
+  function clearNativeHighlights(){
+    if(nativeHighlightFrame){cancelAnimationFrame(nativeHighlightFrame);nativeHighlightFrame=0;}
+    nativeOverlay?.remove();nativeOverlay=null;
+  }
+  document.addEventListener('click',event=>{
+    if(!selectionMode||!nativeSelecting)return;
+    const id=clickedMessage(event);
+    if(!id||!loaded.some(item=>item.id===id))return;
+    event.preventDefault();event.stopImmediatePropagation();
+    toggleMessage(id);
+  },true);
+  document.addEventListener('scroll',scheduleNativeHighlights,true);
+  window.addEventListener('resize',scheduleNativeHighlights);
+  window.visualViewport?.addEventListener('resize',scheduleNativeHighlights);
+  window.visualViewport?.addEventListener('scroll',scheduleNativeHighlights);
+
   let includeChat=false, generatedRoom=room;
   function readPromptOption() {
     try {
@@ -1000,23 +1096,25 @@
     probing = true;
     setInfo('채팅 iframe 연결을 확인하고 있습니다...');
     try {
-      let connected = await requestFrame(frame);
-      if (!connected && when === currentRoom()) {
+      const nativeChat=!frame&&!!document.querySelector('[aria-label="Chat messages"]');
+      let connected=nativeChat||await requestFrame(frame);
+      if(!connected&&when===currentRoom()){
         await pause(500);
-        connected = await requestFrame(chatFrame());
+        connected=await requestFrame(chatFrame());
       }
-      if (when !== currentRoom()) return;
-      if (!connected) { setInfo('채팅 iframe 연결을 확인하지 못했습니다.'); showAccess(); return; }
-      validatedFrame = chatFrame();
+      if(when!==currentRoom())return;
+      if(!connected){setInfo('채팅 iframe 연결을 확인하지 못했습니다.');showAccess();return;}
+      nativeSelecting=nativeChat;
+      validatedFrame=nativeChat?null:chatFrame();
       selectionBeforeStart=new Set(chosen);
       selectionMode = true;
       if (panel) panel.hidden = true;
-      syncFrame(); render();
-      flash('말풍선을 선택한 뒤 상단의 선택 완료 또는 취소를 눌러주세요.');
+      syncFrame(); render();scheduleNativeHighlights();
+      flash('원본 메시지 말풍선을 선택한 뒤 상단의 선택 완료 또는 취소를 눌러주세요.');
     } finally { probing = false; }
   }
   function endSelecting() {
-    selectionMode = false; validatedFrame = null;
+    selectionMode = false; validatedFrame = null;nativeSelecting=false;clearNativeHighlights();
     selectionBeforeStart=null;
     syncFrame(); render();
   }
@@ -1032,9 +1130,9 @@
     panel.hidden=false;limitPositions();applyUi();render();
   }
   function toggleMessage(id) {
-    if (!selectionMode || validatedFrame !== chatFrame() || !loaded.some(item => item.id === id)) return;
+    if (!selectionMode || !(nativeSelecting || (validatedFrame && validatedFrame === chatFrame())) || !loaded.some(item => item.id === id)) return;
     if (chosen.has(id)) chosen.delete(id); else chosen.add(id);
-    render();
+    render();scheduleNativeHighlights();
     flash(`원본 메시지 ${chosen.size}개 선택됨`);
   }
   window.addEventListener('message', event => {
@@ -1504,21 +1602,6 @@
       if (!activeRoom) return;
       window.parent.postMessage({protocol:PROTOCOL, type:'profile-snapshot', room:activeRoom, snapshot:{...snapshot, room:activeRoom}}, origin);
     }
-    const messageId = row => row.getAttribute('data-key')?.slice('message-'.length) || null;
-    function messageElements(row) {
-      const slide = row.querySelector('.swiper-slide-active');
-      if (row.querySelector('.swiper-slide') && !slide) return [];
-      const base = slide || row;
-      const bodies = [...base.querySelectorAll(BODY_SELECTOR)].filter(el => el.closest(ROW_SELECTOR) === row);
-      if (bodies.length) return bodies;
-      return slide ? [slide] : (row.firstElementChild ? [row.firstElementChild] : []);
-    }
-    function clickedMessage(event) {
-      const target = event.target instanceof Element ? event.target : event.target?.parentElement;
-      if (!target || target.closest('a,button,input,textarea,select,[contenteditable="true"]')) return null;
-      const row = target.closest(ROW_SELECTOR);
-      return row && messageElements(row).some(el => el.contains(target)) ? messageId(row) : null;
-    }
     document.addEventListener('click', event => {
       if (!enabled) return;
       const id = clickedMessage(event);
@@ -1526,28 +1609,17 @@
       event.preventDefault(); event.stopImmediatePropagation();
       window.parent.postMessage({protocol: PROTOCOL, type: 'toggle', id}, origin);
     }, true);
-    function redraw() {
-      scheduled = false;
-      if (!enabled || !document.body) { highlight?.remove(); highlight = null; return; }
-      if (!highlight) {
-        highlight = document.createElement('div');
-        highlight.id = 'zsh-selected-overlay';
-        highlight.setAttribute('aria-hidden', 'true');
-        highlight.style.cssText = 'position:fixed;inset:0;z-index:2147483600;pointer-events:none;overflow:hidden';
+    function redraw(){
+      scheduled=false;
+      if(!enabled||!document.body){highlight?.remove();highlight=null;return;}
+      if(!highlight){
+        highlight=document.createElement('div');
+        highlight.id='zsh-selected-overlay';
+        highlight.setAttribute('aria-hidden','true');
+        highlight.style.cssText='position:fixed;inset:0;z-index:2147483600;pointer-events:none;overflow:hidden';
         document.body.appendChild(highlight);
       }
-      const fragment = document.createDocumentFragment();
-      for (const row of document.querySelectorAll(ROW_SELECTOR)) {
-        if (!selected.has(messageId(row))) continue;
-        for (const body of messageElements(row)) {
-          const rect = body.getBoundingClientRect();
-          if (rect.width <= 1 || rect.height <= 1 || rect.bottom < 0 || rect.top > innerHeight) continue;
-          const div = document.createElement('div');
-          div.style.cssText = `position:absolute;box-sizing:border-box;border:3px solid #40c889;border-radius:16px;background:rgba(64,200,137,.055);left:${Math.max(0,rect.left)}px;top:${Math.max(0,rect.top)}px;width:${Math.min(innerWidth,rect.right)-Math.max(0,rect.left)}px;height:${rect.height}px`;
-          fragment.appendChild(div);
-        }
-      }
-      highlight.replaceChildren(fragment);
+      drawMessageOutlines(highlight,[...known],selected);
     }
     function schedule() {
       if (scheduled) return;
@@ -1584,7 +1656,7 @@
       const observer = new MutationObserver(entries => {
         if (enabled && entries.some(e => !e.target?.closest?.('#zsh-selected-overlay'))) schedule();
       });
-      observer.observe(document.body, {childList: true, subtree: true});
+      observer.observe(document.body, {childList:true,subtree:true,characterData:true,attributes:true,attributeFilter:['data-index','data-key','class']});
       const profileObserver = new MutationObserver(() => {
         clearTimeout(profileObserver.timer);
         profileObserver.timer = setTimeout(sendProfileSnapshot, 300);

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         제타 짤뽑 도우미
 // @namespace    zeta-snapshot-helper
-// @version      0.6.5
+// @version      0.6.7
 // @description  1인 스냅샷 프롬프트 생성 · 원본 메시지 선택 · 프로필 감지 (개발판)
 // @author       casualJH
 // @homepageURL  https://github.com/casualJH/zeta-snapshot-helper
@@ -15,7 +15,7 @@
 // ==/UserScript==
 (function () {
   'use strict';
-  const VERSION = '0.6.5';
+  const VERSION = '0.6.7';
   const FRAME_ORIGIN = 'https://frame.pingpong.ai';
   const API_ORIGIN = 'https://api.zeta-ai.io';
   const PROTOCOL = 'zeta-snapshot-helper:selection:v1';
@@ -776,8 +776,35 @@
     toggle.setAttribute('aria-pressed',String(includeChat));
     toggle.textContent=includeChat?'대화 내용 첨부 해제':'대화 내용 다시 첨부';
     copy.disabled=!output.value.trim();
+    renderSnapshotImageCopyButtons();
     const count=loaded.filter(x=>chosen.has(x.id)).length;
     label.textContent=includeChat?'선택 메시지 '+count+'개 · 자동 첨부됨':count?'선택 메시지 '+count+'개 · 첨부 해제됨':'';
+  }
+  function renderSnapshotImageCopyButtons(){
+    const container=root?.getElementById('snapshot-image-copy-buttons');
+    const output=root?.getElementById('snapshot-output');
+    if(!container||!output)return;
+    const people=generatedPeopleByMode[scene.mode];
+    const valid=output.value.trim()&&generatedRoom===currentRoom()&&Array.isArray(people)&&people.length>0;
+    const items=valid?people:[];
+    const signature=JSON.stringify([scene.mode,generatedRoom,items.map(p=>[p.role,p.name,p.image])]);
+    if(container.dataset.signature===signature)return;
+    container.dataset.signature=signature;
+    container.replaceChildren();
+    container.hidden=!items.length;
+    items.forEach((person,index)=>{
+      const button=document.createElement('button');
+      button.type='button';
+      button.className='snapshot-image-copy-button';
+      button.textContent='첨부사진'+(index+1)+' 복사';
+      button.disabled=!person.image;
+      button.setAttribute('aria-label','첨부사진'+(index+1)+' '+(person.name||person.role)+' 이미지 복사');
+      button.addEventListener('click',()=>{
+        if(generatedRoom!==currentRoom())return;
+        void copyProfileImage(person.image,person.name||'첨부사진'+(index+1));
+      });
+      container.appendChild(button);
+    });
   }
   function toggleSnapshotChat(){
     if(!loaded.some(x=>chosen.has(x.id))){flash('선택한 말풍선이 없습니다.');return;}
@@ -1549,6 +1576,9 @@
 #snapshot-output{min-height:205px;max-height:550px;font:12px/1.5 ui-monospace,SFMono-Regular,monospace}
 #scroll #snapshot-attach,#scroll #snapshot-attach[aria-pressed="true"]{background:var(--muted)!important;border-color:var(--line)!important;color:var(--ink)!important;box-shadow:none!important}
 #snapshot-copy{margin-left:auto}
+#snapshot-image-copy-buttons{display:grid;grid-template-columns:repeat(auto-fit,minmax(105px,1fr));gap:7px;margin:8px 0 3px}
+#snapshot-image-copy-buttons[hidden]{display:none}
+#scroll .snapshot-image-copy-button{min-height:40px;padding:8px 6px;white-space:nowrap;font-size:12px;background:var(--muted);color:var(--ink);border:1px solid var(--line)}
 
 #summary{font-size:12px;color:var(--sub)}
 #profile-cards{container-type:inline-size;container-name:zsh-profiles;min-width:0}
@@ -1706,6 +1736,7 @@
    <label for="snapshot-output">프롬프트 미리보기 (수정 가능)</label>
    <textarea id="snapshot-output" placeholder="프롬프트를 생성한 후 직접 수정할 수 있습니다."></textarea>
    <div class="row"><button id="snapshot-copy" class="primary" type="button">프롬프트 복사</button></div>
+   <div id="snapshot-image-copy-buttons" role="group" aria-label="생성한 프롬프트의 첨부사진 개별 복사" hidden></div>
   </section>
   <details id="settings-section" class="settings"><summary>설정</summary><div class="settings-body"><label for="size">실행 버튼 크기 <span id="size-val">100%</span></label><input id="size" type="range" min="65" max="155" step="5">
    <label for="btn-label">실행 버튼 표시 (글자·이모지)</label><input id="btn-label" type="text" maxlength="36" placeholder="🖼️">

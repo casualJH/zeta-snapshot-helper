@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         제타 짤뽑 도우미
 // @namespace    zeta-snapshot-helper
-// @version      0.6.3
+// @version      0.6.4
 // @description  1인 스냅샷 프롬프트 생성 · 원본 메시지 선택 · 프로필 감지 (개발판)
 // @author       casualJH
 // @homepageURL  https://github.com/casualJH/zeta-snapshot-helper
@@ -15,7 +15,7 @@
 // ==/UserScript==
 (function () {
   'use strict';
-  const VERSION = '0.6.3';
+  const VERSION = '0.6.4';
   const FRAME_ORIGIN = 'https://frame.pingpong.ai';
   const API_ORIGIN = 'https://api.zeta-ai.io';
   const PROTOCOL = 'zeta-snapshot-helper:selection:v1';
@@ -189,6 +189,19 @@
   window.visualViewport?.addEventListener('scroll',scheduleNativeHighlights);
 
   let includeChat=false, generatedRoom=room;
+  let chatAttachSuppressed=false, lastChatSelectedIds=new Set();
+  const generatedPeopleByMode={'1':null,'2':null,multi:null};
+  function snapshotPeople(people){
+    return people.map(({role,person})=>({role,name:person?.name||'',image:cleanImage(person?.image||'')}));
+  }
+  function syncAutoChatAttachment(){
+    const now=new Set(loaded.filter(x=>chosen.has(x.id)).map(x=>x.id));
+    const added=[...now].some(id=>!lastChatSelectedIds.has(id));
+    lastChatSelectedIds=now;
+    if(!now.size){includeChat=false;chatAttachSuppressed=false;}
+    else if(added){includeChat=true;chatAttachSuppressed=false;}
+    else if(!chatAttachSuppressed)includeChat=true;
+  }
   // Saved prompts are independent of the launcher/theme settings and room drafts.
   const PRESET_KEY='zeta-snapshot-helper:presets:v1';
   const PRESET_MODES=['1','2','multi'];
@@ -351,23 +364,23 @@
     finally{if(root)root.getElementById('preset-import').value='';}
   }
 
-  const modeDrafts=Object.fromEntries(['1','2','multi'].map(k=>[k,{input:'',output:'',includeChat:false,generatedRoom:room}]));
+  const modeDrafts=Object.fromEntries(['1','2','multi'].map(k=>[k,{input:'',output:'',includeChat:false,chatAttachSuppressed:false,generatedRoom:room}]));
   function saveModeDraft() {
     if(!root)return;
     const d=modeDrafts[scene.mode];
     d.input=root.getElementById('snapshot-user-input').value;
     d.output=root.getElementById('snapshot-output').value;
-    d.includeChat=includeChat;d.generatedRoom=generatedRoom;
+    d.includeChat=includeChat;d.chatAttachSuppressed=chatAttachSuppressed;d.generatedRoom=generatedRoom;
   }
   function restoreModeDraft() {
-    const d=modeDrafts[scene.mode];includeChat=d.includeChat;generatedRoom=d.generatedRoom;
+    const d=modeDrafts[scene.mode];includeChat=d.includeChat;chatAttachSuppressed=d.chatAttachSuppressed;generatedRoom=d.generatedRoom;
     if(!root)return;
     root.getElementById('snapshot-user-input').value=d.input;
     root.getElementById('snapshot-output').value=d.output;
   }
   function switchSceneMode(mode){
     if(mode===scene.mode)return;
-    saveModeDraft();scene.mode=mode;restoreModeDraft();clearPresetEditor();renderSceneModes();renderPresetPicker();
+    saveModeDraft();scene.mode=mode;restoreModeDraft();syncAutoChatAttachment();clearPresetEditor();renderSceneModes();renderPresetPicker();
   }
   const plotIntroductions = new Map();
   const screenDescriptions = new Map();
@@ -400,8 +413,9 @@
     expandedDescriptions.clear(); plotIntroductions.clear(); screenDescriptions.clear();
     scene.pair=0;scene.solo='user';scene.pairPeople=new Set(['user']);scene.pairInitialized=false;scene.multiUser=true;scene.multi.clear();scene.initialized=false;
     selectionBeforeStart=null;
-    includeChat=false;generatedRoom=currentRoom();
-    for(const d of Object.values(modeDrafts)){d.input='';d.output='';d.includeChat=false;d.generatedRoom=generatedRoom;}
+    includeChat=false;chatAttachSuppressed=false;lastChatSelectedIds.clear();generatedRoom=currentRoom();
+    for(const mode of PRESET_MODES)generatedPeopleByMode[mode]=null;
+    for(const d of Object.values(modeDrafts)){d.input='';d.output='';d.includeChat=false;d.chatAttachSuppressed=false;d.generatedRoom=generatedRoom;}
     if(root){
       const input=root.getElementById('snapshot-user-input'),output=root.getElementById('snapshot-output');
       if(input)input.value='';
@@ -727,6 +741,7 @@
     const additions=text.trim()?'[추가사항]\n\n'+text+'\n\n':'';
     const conversation=raw.trim()?'[대화 원문]\n\n'+raw+'\n\n':'';
     const result=formatSceneReferenceBlock(people)+'\n\n'+additions+conversation+getSelectedPreset().body;
+    generatedPeopleByMode[scene.mode]=snapshotPeople(people);
     root.getElementById('snapshot-output').value=result;
     generatedRoom=currentRoom();saveModeDraft();updateSnapshotControls();
     flash(scene.mode==='2'?'2인 스냅샷 프롬프트를 생성했습니다.':'다인 스냅샷 프롬프트를 생성했습니다.');
@@ -755,21 +770,19 @@
     const countPeople=selectedScenePeople().length;
     gen.disabled=!one&&((scene.mode==='2'&&countPeople!==2)||(scene.mode==='multi'&&countPeople<2));
     gen.textContent='프롬프트 생성';
-    toggle.disabled=false;
+    const selectedCount=loaded.filter(x=>chosen.has(x.id)).length;
+    toggle.disabled=!selectedCount;
     root.getElementById('snapshot-template-note').hidden=true;
     toggle.setAttribute('aria-pressed',String(includeChat));
-    toggle.textContent=includeChat?'대화 내용 첨부 해제':'대화 내용 첨부';
+    toggle.textContent=includeChat?'대화 내용 첨부 해제':'대화 내용 다시 첨부';
     copy.disabled=!output.value.trim();
     const count=loaded.filter(x=>chosen.has(x.id)).length;
-    label.textContent=includeChat?'선택 메시지 '+count+'개 · 생성 시 대화 내용 삽입':'';
+    label.textContent=includeChat?'선택 메시지 '+count+'개 · 자동 첨부됨':count?'선택 메시지 '+count+'개 · 첨부 해제됨':'';
   }
-  function toggleSnapshotChat() {
-    if(!includeChat&&!selectedRaw().trim()) {
-      flash('먼저 대화 말풍선을 선택해 주세요.');
-      return;
-    }
-    includeChat=!includeChat;
-    updateSnapshotControls();
+  function toggleSnapshotChat(){
+    if(!loaded.some(x=>chosen.has(x.id))){flash('선택한 말풍선이 없습니다.');return;}
+    includeChat=!includeChat;chatAttachSuppressed=!includeChat;
+    saveModeDraft();updateSnapshotControls();
   }
   function generateSoloSnapshot() {
     if(scene.mode!=='1'){
@@ -789,24 +802,58 @@
     const url=subject.person?.image||'';
     const result=formatSceneReferenceBlock([{role:subject.type,person:subject.person}])+
       '\n\n'+formattedInput+chatBlock+getSelectedPreset().body;
+    generatedPeopleByMode['1']=snapshotPeople([{role:subject.type,person:subject.person}]);
     root.getElementById('snapshot-output').value=result;
     generatedRoom=currentRoom();
     saveModeDraft();
     updateSnapshotControls();
     flash(url?'1인 스냅샷 프롬프트를 생성했습니다.':'이미지 URL이 미확인입니다. 결과에서 직접 입력할 수 있습니다.');
   }
-  async function copySoloSnapshot() {
+  function escapeClipboardHtml(value){
+    return String(value).replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
+  }
+  async function imageDataUri(url){
+    const png=await toPng(url);
+    const base64=await new Promise((resolve,reject)=>{
+      const reader=new FileReader();
+      reader.onload=()=>resolve(reader.result);
+      reader.onerror=()=>reject(Error('이미지 데이터 인코딩 실패'));
+      reader.readAsDataURL(png);
+    });
+    if(typeof base64!=='string'||!base64.startsWith('data:image/png;base64,'))throw Error('이미지 인코딩 실패');
+    return base64;
+  }
+  async function clipboardHtmlForPeople(prompt,people){
+    const images=[];
+    for(let i=0;i<people.length;i++){
+      const person=people[i];
+      if(!person.image)throw Error('첨부사진'+(i+1)+'의 이미지 URL을 찾지 못했습니다.');
+      const uri=await imageDataUri(person.image);
+      images.push('<figure><img alt="'+escapeClipboardHtml('첨부사진'+(i+1)+' '+(person.name||''))+
+        '" src="'+uri+'"></figure>');
+    }
+    return '<html><body>'+images.join('')+'<pre>'+escapeClipboardHtml(prompt)+'</pre></body></html>';
+  }
+  async function copySoloSnapshot(){
     const field=root.getElementById('snapshot-output');
     if(!field?.value.trim())return;
-    if(generatedRoom!==currentRoom()){
-      flash('채팅방이 변경되었습니다. 다시 생성해 주세요.');return;
+    if(generatedRoom!==currentRoom()){flash('채팅방이 변경되었습니다. 다시 생성해 주세요.');return;}
+    const people=generatedPeopleByMode[scene.mode];
+    if(!people?.length){flash('복사할 인물 정보를 확인할 수 없습니다. 프롬프트를 다시 생성해 주세요.');return;}
+    if(people.some(person=>!person.image)){flash('선택한 인물의 프로필 사진이 없습니다. 프로필을 새로고침해 주세요.');return;}
+    if(!navigator.clipboard?.write||typeof ClipboardItem==='undefined'){
+      flash('이 브라우저에서는 이미지와 텍스트 동시 복사를 지원하지 않습니다.');return;
     }
-    try {
-      await writeText(field.value);
-      flash('프롬프트 전체를 복사했습니다.');
-    } catch(_) {
-      field.focus();field.select();
-      flash('자동 복사를 사용할 수 없습니다. 직접 복사해 주세요.');
+    const text=field.value;
+    const htmlPromise=clipboardHtmlForPeople(text,people).then(html=>new Blob([html],{type:'text/html'}));
+    try{
+      await navigator.clipboard.write([new ClipboardItem({
+        'text/html':htmlPromise,
+        'text/plain':new Blob([text],{type:'text/plain'})
+      })]);
+      flash('프롬프트 + 선택 인물 사진 '+people.length+'장 복사를 요청했습니다. ChatGPT 붙여넣기 결과를 확인해 주세요.');
+    }catch(error){
+      flash('이미지+텍스트 동시 복사 실패 · 사진 접근 또는 브라우저 클립보드 제한을 확인해 주세요.');
     }
   }
   async function copyProfileDescription(value) {
@@ -1299,6 +1346,7 @@
   function render() {
     if (!root) return;
     const scroller=root.getElementById('scroll'),position=scroller?.scrollTop;
+    syncAutoChatAttachment();
     const count = loaded.filter(item => chosen.has(item.id)).length;
     root.getElementById('collected').textContent = `${loaded.length}개`;
     root.getElementById('selected').textContent = `${count}개`;
@@ -1501,7 +1549,7 @@
 #snapshot-user-input,#snapshot-output{display:block;width:100%;background:var(--muted);color:var(--ink);border:1px solid var(--line);border-radius:9px;resize:vertical;padding:10px;white-space:pre-wrap}
 #snapshot-user-input{min-height:96px;font:12px/1.5 system-ui,-apple-system,sans-serif}
 #snapshot-output{min-height:205px;max-height:550px;font:12px/1.5 ui-monospace,SFMono-Regular,monospace}
-#snapshot-attach[aria-pressed="true"]{background:var(--accent)!important;border-color:var(--accent)!important;color:var(--accent-ink)!important}
+#scroll #snapshot-attach,#scroll #snapshot-attach[aria-pressed="true"]{background:var(--muted)!important;border-color:var(--line)!important;color:var(--ink)!important;box-shadow:none!important}
 #snapshot-copy{margin-left:auto}
 
 #summary{font-size:12px;color:var(--sub)}
@@ -1592,7 +1640,7 @@
 #snapshot-user-input{min-height:115px}
 #snapshot-attach-info{flex:1 1 100%;min-width:0}
 #scroll #refresh-profiles,#scroll #snapshot-generate,#scroll #snapshot-copy,#scroll #snapshot-attach{display:block;width:100%;min-height:44px;margin:0;text-align:center;flex:0 0 100%}
-#scroll #load,#scroll #snapshot-attach,#scroll #snapshot-copy{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+#scroll #load,#scroll #snapshot-copy{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
 #scroll #copy{margin-left:auto}
 #snapshot-template-note{font-size:11px;color:var(--sub);margin:8px 0}
 #selection-actions{position:fixed;z-index:2147483644;top:calc(env(safe-area-inset-top,0px) + 16px);left:50%;transform:translateX(-50%);display:flex;gap:8px;align-items:center;justify-content:center;white-space:nowrap}
@@ -1643,7 +1691,7 @@
      <p id="summary" aria-live="polite">선택한 메시지가 없습니다.</p>
      <textarea id="preview" readonly aria-label="선택 대화 원문" placeholder="선택한 원본 메시지가 여기에 표시됩니다."></textarea>
      <div class="row"><span id="chars" class="note">0자</span><button id="copy" type="button">선택 원문 복사</button></div>
-     <div class="row"><button id="snapshot-attach" class="primary" type="button" aria-pressed="false">대화 내용 첨부</button><span id="snapshot-attach-info" class="note" aria-live="polite"></span></div>
+     <div class="row"><button id="snapshot-attach" type="button" aria-pressed="false">대화 내용 첨부 해제</button><span id="snapshot-attach-info" class="note" aria-live="polite"></span></div>
     </div>
    </details>
    <div class="snapshot-step snapshot-step-generate">4. 프롬프트 생성</div>

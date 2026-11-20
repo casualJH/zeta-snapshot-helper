@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         제타 짤뽑 도우미
 // @namespace    zeta-snapshot-helper
-// @version      0.6.10
+// @version      0.6.11
 // @description  1인 스냅샷 프롬프트 생성 · 원본 메시지 선택 · 프로필 감지 (개발판)
 // @author       casualJH
 // @homepageURL  https://github.com/casualJH/zeta-snapshot-helper
@@ -15,7 +15,7 @@
 // ==/UserScript==
 (function () {
   'use strict';
-  const VERSION = '0.6.10';
+  const VERSION = '0.6.11';
   const FRAME_ORIGIN = 'https://frame.pingpong.ai';
   const API_ORIGIN = 'https://api.zeta-ai.io';
   const PROTOCOL = 'zeta-snapshot-helper:selection:v1';
@@ -1751,7 +1751,7 @@
    <div class="snapshot-step snapshot-step-generate">4. 프롬프트 생성</div>
 
     <div class="preset-area">
-     <div class="preset-heading"><strong>프롬프트 프리셋</strong></div>
+     <div class="preset-heading"><strong>프롬프트 프리셋</strong><button id="preset-manage-open" type="button">프리셋 관리</button></div>
      <div id="preset-segments" class="preset-segments" role="group" aria-label="프롬프트 프리셋 선택"></div>
      <p id="preset-current" class="note" aria-live="polite"></p>
      <div class="preset-toolbar"><button type="button" id="preset-set-default">기본값 지정</button></div>
@@ -1833,6 +1833,19 @@
     root.getElementById('snapshot-attach').addEventListener('click',toggleSnapshotChat);
     renderPresetPicker();
     root.getElementById('preset-add').addEventListener('click',()=>{clearPresetEditor();root.getElementById('preset-settings').open=true;root.getElementById('preset-manager').open=true;});
+    root.getElementById('preset-manage-open').addEventListener('click',()=>{
+      const settings=root.getElementById('settings-section');
+      const presetSettings=root.getElementById('preset-settings');
+      const presetManager=root.getElementById('preset-manager');
+      settings.open=true;
+      presetSettings.open=true;
+      presetManager.open=true;
+      const scroll=root.getElementById('scroll');
+      if(scroll){
+        const offset=presetSettings.getBoundingClientRect().top-scroll.getBoundingClientRect().top;
+        scroll.scrollTop+=offset-12;
+      }
+    });
     root.getElementById('preset-set-default').addEventListener('click',setDefaultPreset);
     root.getElementById('preset-save').addEventListener('click',savePresetFromEditor);
     root.getElementById('preset-delete').addEventListener('click',deletePresetFromEditor);

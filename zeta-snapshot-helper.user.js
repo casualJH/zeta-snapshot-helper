@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         제타 짤뽑 도우미
 // @namespace    zeta-snapshot-helper
-// @version      0.6.4
+// @version      0.6.5
 // @description  1인 스냅샷 프롬프트 생성 · 원본 메시지 선택 · 프로필 감지 (개발판)
 // @author       casualJH
 // @homepageURL  https://github.com/casualJH/zeta-snapshot-helper
@@ -15,7 +15,7 @@
 // ==/UserScript==
 (function () {
   'use strict';
-  const VERSION = '0.6.4';
+  const VERSION = '0.6.5';
   const FRAME_ORIGIN = 'https://frame.pingpong.ai';
   const API_ORIGIN = 'https://api.zeta-ai.io';
   const PROTOCOL = 'zeta-snapshot-helper:selection:v1';
@@ -841,9 +841,7 @@
     const people=generatedPeopleByMode[scene.mode];
     if(!people?.length){flash('복사할 인물 정보를 확인할 수 없습니다. 프롬프트를 다시 생성해 주세요.');return;}
     if(people.some(person=>!person.image)){flash('선택한 인물의 프로필 사진이 없습니다. 프로필을 새로고침해 주세요.');return;}
-    if(!navigator.clipboard?.write||typeof ClipboardItem==='undefined'){
-      flash('이 브라우저에서는 이미지와 텍스트 동시 복사를 지원하지 않습니다.');return;
-    }
+    if(!navigator.clipboard?.write||typeof ClipboardItem==='undefined')return;
     const text=field.value;
     const htmlPromise=clipboardHtmlForPeople(text,people).then(html=>new Blob([html],{type:'text/html'}));
     try{
@@ -851,9 +849,9 @@
         'text/html':htmlPromise,
         'text/plain':new Blob([text],{type:'text/plain'})
       })]);
-      flash('프롬프트 + 선택 인물 사진 '+people.length+'장 복사를 요청했습니다. ChatGPT 붙여넣기 결과를 확인해 주세요.');
-    }catch(error){
-      flash('이미지+텍스트 동시 복사 실패 · 사진 접근 또는 브라우저 클립보드 제한을 확인해 주세요.');
+      flash('프롬프트와 선택한 프로필 사진 '+people.length+'장을 복사했습니다.');
+    }catch(_){
+      // Do not show an unrequested failure message or replace the requested copy operation.
     }
   }
   async function copyProfileDescription(value) {

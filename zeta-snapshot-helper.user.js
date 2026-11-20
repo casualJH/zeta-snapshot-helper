@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         제타 짤뽑 도우미
 // @namespace    zeta-snapshot-helper
-// @version      0.6.1
+// @version      0.6.2
 // @description  1인 스냅샷 프롬프트 생성 · 원본 메시지 선택 · 프로필 감지 (개발판)
 // @author       casualJH
 // @homepageURL  https://github.com/casualJH/zeta-snapshot-helper
@@ -15,7 +15,7 @@
 // ==/UserScript==
 (function () {
   'use strict';
-  const VERSION = '0.6.1';
+  const VERSION = '0.6.2';
   const FRAME_ORIGIN = 'https://frame.pingpong.ai';
   const API_ORIGIN = 'https://api.zeta-ai.io';
   const PROTOCOL = 'zeta-snapshot-helper:selection:v1';
@@ -250,76 +250,96 @@
     const id=selectedPresets[mode];
     return presetData.presets.find(p=>p.mode===mode&&p.id===id)||builtinPreset(mode);
   }
+
+  const presetModeLabels={'1':'1인','2':'2인',multi:'다인'};
   function clearPresetEditor(){
     if(!root)return;
     presetEditorId=null;
     root.getElementById('preset-name').value='';
     root.getElementById('preset-body').value='';
+    root.getElementById('preset-mode').value=scene.mode;
     root.getElementById('preset-editor-title').textContent='새 프리셋';
     root.getElementById('preset-save').textContent='프리셋 저장';
     root.getElementById('preset-delete').hidden=true;
   }
   function editPreset(p){
-    if(!root)return;
-    presetEditorId=p.id==='builtin'?null:p.id;
-    root.getElementById('preset-name').value=p.id==='builtin'?'기본 프롬프트 복제':p.name;
+    if(!root||!p||p.id==='builtin')return;
+    presetEditorId=p.id;
+    root.getElementById('preset-name').value=p.name;
     root.getElementById('preset-body').value=p.body;
-    root.getElementById('preset-editor-title').textContent=p.id==='builtin'?'기본 프롬프트 복제':p.name+' 편집';
-    root.getElementById('preset-save').textContent=p.id==='builtin'?'새 프리셋으로 저장':'변경사항 저장';
-    root.getElementById('preset-delete').hidden=p.id==='builtin';
+    root.getElementById('preset-mode').value=p.mode;
+    root.getElementById('preset-editor-title').textContent=p.name+' 편집';
+    root.getElementById('preset-save').textContent='변경사항 저장';
+    root.getElementById('preset-delete').hidden=false;
     root.getElementById('preset-manager').open=true;
+  }
+  function renderPresetManager(){
+    if(!root)return;
+    const list=root.getElementById('preset-group-list');if(!list)return;
+    list.replaceChildren();
+    for(const mode of PRESET_MODES){
+      const section=document.createElement('section');section.className='preset-group';
+      const heading=document.createElement('strong'),items=presetData.presets.filter(p=>p.mode===mode);
+      heading.textContent=presetModeLabels[mode]+' 프리셋 ('+items.length+')';section.appendChild(heading);
+      if(!items.length){const empty=document.createElement('p');empty.className='note';empty.textContent='저장한 프리셋이 없습니다.';section.appendChild(empty);}
+      for(const p of items){
+        const row=document.createElement('div');row.className='preset-group-item';
+        const name=document.createElement('span');name.textContent=p.name+(presetData.defaults[mode]===p.id?' · 기본값':'');
+        const edit=document.createElement('button');edit.type='button';edit.textContent='편집';edit.addEventListener('click',()=>editPreset(p));
+        const remove=document.createElement('button');remove.type='button';remove.textContent='삭제';remove.addEventListener('click',()=>deletePreset(p.id));
+        row.append(name,edit,remove);section.appendChild(row);
+      }
+      list.appendChild(section);
+    }
   }
   function renderPresetPicker(){
     if(!root)return;
-    const row=root.getElementById('preset-segments');
-    if(!row)return;
-    const mode=scene.mode,options=[builtinPreset(mode),...presetData.presets.filter(p=>p.mode===mode)];
-    const selected=getSelectedPreset(mode);
+    const row=root.getElementById('preset-segments');if(!row)return;
+    const mode=scene.mode,options=[builtinPreset(mode),...presetData.presets.filter(p=>p.mode===mode)],selected=getSelectedPreset(mode);
     row.replaceChildren();
     for(const p of options){
-      const button=document.createElement('button');
-      button.type='button';button.textContent=p.name;
-      button.className='preset-segment';
-      button.setAttribute('aria-pressed',String(selected.id===p.id));
-      button.title=p.name;
-      button.addEventListener('click',()=>{selectedPresets[mode]=p.id;renderPresetPicker();});
-      row.appendChild(button);
+      const button=document.createElement('button');button.type='button';button.textContent=p.name;
+      button.className='preset-segment';button.setAttribute('aria-pressed',String(selected.id===p.id));button.title=p.name;
+      button.addEventListener('click',()=>{selectedPresets[mode]=p.id;renderPresetPicker();});row.appendChild(button);
     }
-    const label=root.getElementById('preset-current');
-    label.textContent='선택: '+selected.name+(selected.id==='builtin'?' (내장 기본)':'');
+    root.getElementById('preset-current').textContent='선택: '+selected.name+(selected.id==='builtin'?' (내장 기본)':'');
     root.getElementById('preset-set-default').disabled=presetData.defaults[mode]===selected.id;
-    root.getElementById('preset-edit').textContent=selected.id==='builtin'?'기본 복제':'편집';
-    // Never silently replace unsaved editor content when switching the preset.
+    renderPresetManager();
   }
   function createPresetId(){
     const id='preset-'+Date.now().toString(36)+'-'+Math.random().toString(36).slice(2,10);
     return presetData.presets.some(p=>p.id===id)?createPresetId():id;
   }
+
   function savePresetFromEditor(){
-    const name=root.getElementById('preset-name').value.trim();
-    const body=root.getElementById('preset-body').value.trim();
+    const name=root.getElementById('preset-name').value.trim(),body=root.getElementById('preset-body').value.trim();
+    const mode=root.getElementById('preset-mode').value;
+    if(!PRESET_MODES.includes(mode)){flash('적용 인원수를 선택해 주세요.');return;}
     if(!name||name.length>80){flash('프리셋 이름을 1~80자로 입력해 주세요.');return;}
     if(!body||body.length>100000){flash('프롬프트 본문을 1~100,000자로 입력해 주세요.');return;}
-    const mode=scene.mode;
-    let target=presetData.presets.find(p=>p.id===presetEditorId&&p.mode===mode);
-    if(!target){
-      if(presetData.presets.length>=100){flash('프리셋은 최대 100개까지 저장할 수 있습니다.');return;}
-      target={id:createPresetId(),mode,name,body};presetData.presets.push(target);
-    }else{target.name=name;target.body=body;}
-    if(!savePresetData())return;
-    selectedPresets[mode]=target.id;renderPresetPicker();editPreset(target);
+    const target=presetData.presets.find(p=>p.id===presetEditorId);
+    if(!target&&presetData.presets.length>=100){flash('프리셋은 최대 100개까지 저장할 수 있습니다.');return;}
+    const previous=JSON.parse(JSON.stringify(presetData)),oldMode=target?.mode,id=target?.id||createPresetId();
+    if(target){target.name=name;target.body=body;target.mode=mode;}
+    else presetData.presets.push({id,mode,name,body});
+    if(oldMode&&oldMode!==mode&&presetData.defaults[oldMode]===id)presetData.defaults[oldMode]='builtin';
+    if(!savePresetData()){presetData=previous;return;}
+    if(oldMode&&oldMode!==mode&&selectedPresets[oldMode]===id)selectedPresets[oldMode]=presetData.defaults[oldMode];
+    selectedPresets[mode]=id;renderPresetPicker();editPreset(presetData.presets.find(p=>p.id===id));
     flash('프리셋을 저장했습니다.');
   }
-  function deletePresetFromEditor(){
-    const p=presetData.presets.find(x=>x.id===presetEditorId&&x.mode===scene.mode);
-    if(!p)return;
+  function deletePreset(id){
+    const p=presetData.presets.find(x=>x.id===id);if(!p)return;
     if(!confirm('프리셋 "'+p.name+'"을 삭제할까요?'))return;
+    const previous=JSON.parse(JSON.stringify(presetData));
     presetData.presets=presetData.presets.filter(x=>x.id!==p.id);
     if(presetData.defaults[p.mode]===p.id)presetData.defaults[p.mode]='builtin';
+    if(!savePresetData()){presetData=previous;return;}
     if(selectedPresets[p.mode]===p.id)selectedPresets[p.mode]=presetData.defaults[p.mode];
-    if(!savePresetData())return;
-    clearPresetEditor();renderPresetPicker();flash('프리셋을 삭제했습니다.');
+    if(presetEditorId===id)clearPresetEditor();
+    renderPresetPicker();flash('프리셋을 삭제했습니다.');
   }
+  function deletePresetFromEditor(){if(presetEditorId)deletePreset(presetEditorId);}
   function setDefaultPreset(){
     const mode=scene.mode,p=getSelectedPreset(mode);
     presetData.defaults[mode]=p.id;
@@ -1573,9 +1593,17 @@
 .preset-manager-body{padding:11px;display:flex;flex-direction:column;gap:6px;min-width:0}
 .preset-manager-body strong{font-size:12px}
 .preset-manager-body label:not(.preset-import-button){font-size:11px;color:var(--sub)}
-#preset-name,#preset-body{width:100%;min-width:0;border:1px solid var(--line);background:var(--bg);color:var(--ink);border-radius:8px;padding:9px;font:12px/1.5 system-ui,-apple-system,sans-serif}
+#preset-name,#preset-body,#preset-mode{width:100%;min-width:0;border:1px solid var(--line);background:var(--bg);color:var(--ink);border-radius:8px;padding:9px;font:12px/1.5 system-ui,-apple-system,sans-serif}
 #preset-body{resize:vertical;min-height:155px;white-space:pre-wrap}
-.preset-backup{border-top:1px solid var(--line);padding-top:11px;margin-top:6px}
+.preset-backup{border-top:1px solid var(--line);padding-top:11px;margin-top:12px}
+.preset-backup-title{font-size:12px;margin-top:7px;color:var(--sub)}
+.preset-group-list{display:flex;flex-direction:column;gap:10px;padding-bottom:12px;border-bottom:1px solid var(--line);margin-bottom:8px}
+.preset-group{display:flex;flex-direction:column;gap:6px;min-width:0}
+.preset-group>strong{font-size:12px}
+.preset-group-item{display:flex;align-items:center;gap:5px;min-width:0}
+.preset-group-item span{flex:1;min-width:0;overflow-wrap:anywhere;font-size:12px}
+#scroll .preset-group-item button{font-size:11px;min-height:30px;padding:5px 8px;flex:none}
+#preset-mode{min-height:36px}
 .preset-import-button{display:inline-flex;align-items:center;padding:6px 10px;border:1px solid var(--line);background:var(--muted);border-radius:8px;color:var(--ink);font-size:11px;min-height:32px;cursor:pointer}
 #preset-import{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none}
 
@@ -1645,21 +1673,20 @@
      <div class="preset-heading"><strong>프롬프트 프리셋</strong><button id="preset-add" type="button">+ 새 프리셋</button></div>
      <div id="preset-segments" class="preset-segments" role="group" aria-label="프롬프트 프리셋 선택"></div>
      <p id="preset-current" class="note" aria-live="polite"></p>
-     <div class="preset-toolbar"><button type="button" id="preset-edit">기본 복제</button><button type="button" id="preset-set-default">기본값 지정</button></div>
+     <div class="preset-toolbar"><button type="button" id="preset-set-default">기본값 지정</button></div>
      <details id="preset-manager" class="preset-manager">
-      <summary>프리셋 관리 · 백업</summary>
+      <summary>프리셋 관리</summary>
       <div class="preset-manager-body">
+       <div id="preset-group-list" class="preset-group-list"></div>
        <strong id="preset-editor-title">새 프리셋</strong>
+       <label for="preset-mode">적용 인원수</label>
+       <select id="preset-mode"><option value="1">1인</option><option value="2">2인</option><option value="multi">다인</option></select>
        <label for="preset-name">프리셋 이름</label>
        <input id="preset-name" type="text" maxlength="80" placeholder="프리셋 이름">
        <label for="preset-body">프롬프트 본문</label>
        <textarea id="preset-body" rows="9" placeholder="프롬프트 전문을 입력하세요."></textarea>
        <div class="preset-toolbar"><button type="button" id="preset-save" class="primary">프리셋 저장</button><button type="button" id="preset-delete" hidden>삭제</button><button type="button" id="preset-editor-clear">새로 작성</button></div>
-       <div class="preset-backup">
-        <strong>JSON 백업 · 복원</strong>
-        <p class="note">모든 인원수 모드의 사용자 프리셋을 백업합니다. 가져오기는 기존 프리셋을 교체합니다.</p>
-        <div class="preset-toolbar"><button id="preset-export" type="button">JSON 내보내기</button><label class="preset-import-button" for="preset-import">JSON 가져오기</label><input id="preset-import" type="file" accept=".json,application/json"></div>
-       </div>
+
       </div>
      </details>
     </div>
@@ -1674,6 +1701,12 @@
    <label for="btn-label">실행 버튼 표시 (글자·이모지)</label><input id="btn-label" type="text" maxlength="36" placeholder="🖼️">
    <label>테마 &gt; 화면 모드</label><div class="segment" role="group" aria-label="화면 모드"><button type="button" data-theme="light">라이트 모드</button><button type="button" data-theme="dark">다크 모드</button><button type="button" data-theme="system">기기 설정</button></div>
    <div class="row"><button id="reset" type="button">UI 설정 초기화</button></div>
+   <div class="preset-backup">
+    <strong>프리셋 백업</strong>
+    <div class="preset-backup-title">JSON 백업 · 복원</div>
+    <p class="note">모든 인원수 모드의 사용자 프리셋을 백업합니다. 가져오기는 기존 프리셋을 교체합니다.</p>
+    <div class="preset-toolbar"><button id="preset-export" type="button">JSON 내보내기</button><label class="preset-import-button" for="preset-import">JSON 가져오기</label><input id="preset-import" type="file" accept=".json,application/json"></div>
+   </div>
   </div></details>
  </div><div id="resize" role="separator" aria-label="팝업창 크기 조절">◢</div>
 </section>
@@ -1713,7 +1746,6 @@
     root.getElementById('snapshot-attach').addEventListener('click',toggleSnapshotChat);
     renderPresetPicker();
     root.getElementById('preset-add').addEventListener('click',()=>{clearPresetEditor();root.getElementById('preset-manager').open=true;});
-    root.getElementById('preset-edit').addEventListener('click',()=>editPreset(getSelectedPreset()));
     root.getElementById('preset-set-default').addEventListener('click',setDefaultPreset);
     root.getElementById('preset-save').addEventListener('click',savePresetFromEditor);
     root.getElementById('preset-delete').addEventListener('click',deletePresetFromEditor);

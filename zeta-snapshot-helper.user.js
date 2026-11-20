@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         제타 짤뽑 도우미
 // @namespace    zeta-snapshot-helper
-// @version      0.6.9
+// @version      0.6.10
 // @description  1인 스냅샷 프롬프트 생성 · 원본 메시지 선택 · 프로필 감지 (개발판)
 // @author       casualJH
 // @homepageURL  https://github.com/casualJH/zeta-snapshot-helper
@@ -15,7 +15,7 @@
 // ==/UserScript==
 (function () {
   'use strict';
-  const VERSION = '0.6.9';
+  const VERSION = '0.6.10';
   const FRAME_ORIGIN = 'https://frame.pingpong.ai';
   const API_ORIGIN = 'https://api.zeta-ai.io';
   const PROTOCOL = 'zeta-snapshot-helper:selection:v1';
@@ -43,7 +43,7 @@
     return row&&messageElements(row).some(el=>el.contains(target))?messageId(row):null;
   }
   // Follow zeta-chat-export's message-group geometry and viewport clipping.
-  function drawMessageOutlines(layer,indices,selectedIds){
+  function drawMessageOutlines(layer,indices,selectedIndices){
     let headerBottom=0;
     for(const el of document.querySelectorAll('header,[role="banner"],nav')){
       if(el.closest('#zsh-native-message-overlay,#zsh-selected-overlay'))continue;
@@ -62,7 +62,7 @@
     const boxes=[];
     for(const row of document.querySelectorAll(ROW_SELECTOR)){
       const index=indices.get(messageId(row));
-      if(index===undefined)continue;
+      if(index===undefined||!selectedIndices.has(index))continue;
       for(const body of messageElements(row)){
         const rect=body.getBoundingClientRect();
         if(rect.width<=0||rect.height<=0||rect.bottom<=top||rect.top>=bottom)continue;
@@ -166,7 +166,8 @@
         nativeOverlay.style.cssText='position:fixed;inset:0;z-index:2147483600;pointer-events:none;overflow:hidden';
         document.body.appendChild(nativeOverlay);
       }
-      drawMessageOutlines(nativeOverlay,selectedMessageState().indices,chosen);
+      const state=selectedMessageState();
+      drawMessageOutlines(nativeOverlay,state.indices,state.selected);
     });
   }
   function clearNativeHighlights(){

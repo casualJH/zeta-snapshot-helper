@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         제타 짤뽑 도우미
 // @namespace    zeta-snapshot-helper
-// @version      0.6.8
+// @version      0.6.9
 // @description  1인 스냅샷 프롬프트 생성 · 원본 메시지 선택 · 프로필 감지 (개발판)
 // @author       casualJH
 // @homepageURL  https://github.com/casualJH/zeta-snapshot-helper
@@ -15,7 +15,7 @@
 // ==/UserScript==
 (function () {
   'use strict';
-  const VERSION = '0.6.8';
+  const VERSION = '0.6.9';
   const FRAME_ORIGIN = 'https://frame.pingpong.ai';
   const API_ORIGIN = 'https://api.zeta-ai.io';
   const PROTOCOL = 'zeta-snapshot-helper:selection:v1';
@@ -42,11 +42,11 @@
     const row=target.closest(ROW_SELECTOR);
     return row&&messageElements(row).some(el=>el.contains(target))?messageId(row):null;
   }
-  // Borrow zeta-chat-export's message-mode highlight grouping and viewport clipping.
-  function drawMessageOutlines(layer,knownIds,selectedIds){
-    const indices=new Map(knownIds.map((id,index)=>[id,index]));
+  // Follow zeta-chat-export's message-group geometry and viewport clipping.
+  function drawMessageOutlines(layer,indices,selectedIds){
     let headerBottom=0;
     for(const el of document.querySelectorAll('header,[role="banner"],nav')){
+      if(el.closest('#zsh-native-message-overlay,#zsh-selected-overlay'))continue;
       const rect=el.getBoundingClientRect();
       if(rect.top>12||rect.bottom<=0||rect.height>180)continue;
       const position=getComputedStyle(el).position;
@@ -61,11 +61,11 @@
     layer.style.clipPath='inset('+top+'px 0px '+Math.max(0,innerHeight-bottom)+'px 0px)';
     const boxes=[];
     for(const row of document.querySelectorAll(ROW_SELECTOR)){
-      const id=messageId(row),index=indices.get(id);
-      if(index===undefined||!selectedIds.has(id))continue;
+      const index=indices.get(messageId(row));
+      if(index===undefined)continue;
       for(const body of messageElements(row)){
         const rect=body.getBoundingClientRect();
-        if(rect.width<=1||rect.height<=1||rect.bottom<=top||rect.top>=bottom)continue;
+        if(rect.width<=0||rect.height<=0||rect.bottom<=top||rect.top>=bottom)continue;
         boxes.push({index,left:rect.left,right:rect.right,top:rect.top,bottom:rect.bottom});
       }
     }
@@ -75,21 +75,18 @@
       const prev=outlines[outlines.length-1];
       const merge=!!prev&&box.index<=prev.end+1&&box.top>=prev.bottom-8&&box.top-prev.bottom<=24&&Math.abs(box.left-prev.left)<=32&&Math.abs(box.right-prev.right)<=32;
       if(!merge){outlines.push({...box,end:box.index});continue;}
-      prev.end=Math.max(prev.end,box.index);
-      prev.left=Math.min(prev.left,box.left);prev.right=Math.max(prev.right,box.right);
-      prev.top=Math.min(prev.top,box.top);prev.bottom=Math.max(prev.bottom,box.bottom);
+      prev.end=box.index;prev.left=Math.min(prev.left,box.left);prev.right=Math.max(prev.right,box.right);prev.top=Math.min(prev.top,box.top);prev.bottom=Math.max(prev.bottom,box.bottom);
     }
     const fragment=document.createDocumentFragment();
     for(const box of outlines){
       const x=Math.max(0,box.left+2),y=Math.max(top,box.top+2),right=Math.min(innerWidth,box.right-2),end=Math.min(bottom,box.bottom-2);
       if(right<=x||end<=y)continue;
       const outline=document.createElement('div');
-      outline.style.cssText='position:absolute;box-sizing:border-box;border:3px solid #40c889;border-radius:16px;background:rgba(64,200,137,.055);left:'+x+'px;top:'+y+'px;width:'+(right-x)+'px;height:'+(end-y)+'px';
+      outline.style.cssText='position:absolute;box-sizing:border-box;border:3px solid #49ce88;border-radius:19px;background:rgba(73,206,136,.025);left:'+x+'px;top:'+y+'px;width:'+(right-x)+'px;height:'+(end-y)+'px';
       fragment.appendChild(outline);
     }
     layer.replaceChildren(fragment);
   }
-
 
   function isChatFrameUrl(url) {
     return url.origin === FRAME_ORIGIN && /^\/v\d+\/index\.html$/.test(url.pathname);
@@ -169,7 +166,7 @@
         nativeOverlay.style.cssText='position:fixed;inset:0;z-index:2147483600;pointer-events:none;overflow:hidden';
         document.body.appendChild(nativeOverlay);
       }
-      drawMessageOutlines(nativeOverlay,loaded.map(m=>m.id),chosen);
+      drawMessageOutlines(nativeOverlay,selectedMessageState().indices,chosen);
     });
   }
   function clearNativeHighlights(){
@@ -1201,6 +1198,27 @@
     records.sort((a, b) => (Date.parse(a.time) || 0) - (Date.parse(b.time) || 0) || a.index - b.index);
     return records;
   }
+  // The export script's message mode: only strict isIntro entries share the opening group.
+  function displayGroups(){
+    const groups=[];
+    const intro=loaded.filter(record=>record.isIntro===true);
+    if(intro.length)groups.push({id:'intro-'+intro[0].id,isIntro:true,records:intro});
+    for(const record of loaded)if(record.isIntro!==true)groups.push({id:record.id,isIntro:false,records:[record]});
+    return groups;
+  }
+  function selectedGroupCount(){return displayGroups().filter(group=>group.records.some(r=>chosen.has(r.id))).length;}
+  function selectedMessageState(){
+    const indices=new Map(),selected=new Set(),known=new Set();
+    if(selectionMode){
+      displayGroups().forEach((group,index)=>{
+        for(const record of group.records){
+          known.add(record.id);indices.set(record.id,index);
+          if(chosen.has(record.id))selected.add(index);
+        }
+      });
+    }
+    return {enabled:selectionMode&&known.size>0,indices,selected,known};
+  }
   const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
   function setInfo(text) { currentInfo = text; render(); }
   async function loadMessages() {
@@ -1270,7 +1288,7 @@
     return matches.length === 1 ? matches[0] : null;
   }
   function frameState() {
-    return selectionMode ? {enabled:true,known:loaded.map(m => m.id),chosen:[...chosen]} : {enabled:false,known:[],chosen:[]};
+    return selectedMessageState();
   }
   function syncFrame() {
     const frame = chatFrame();
@@ -1348,10 +1366,14 @@
     panel.hidden=false;limitPositions();applyUi();render();
   }
   function toggleMessage(id) {
-    if (!selectionMode || !(nativeSelecting || (validatedFrame && validatedFrame === chatFrame())) || !loaded.some(item => item.id === id)) return;
-    if (chosen.has(id)) chosen.delete(id); else chosen.add(id);
+    if(!selectionMode || !(nativeSelecting || (validatedFrame && validatedFrame === chatFrame())))return false;
+    const group=displayGroups().find(g=>g.records.some(r=>r.id===id));
+    if(!group)return false;
+    const shouldAdd=group.records.some(r=>!chosen.has(r.id));
+    group.records.forEach(r=>shouldAdd?chosen.add(r.id):chosen.delete(r.id));
     render();scheduleNativeHighlights();
-    flash(`원본 메시지 ${chosen.size}개 선택됨`);
+    flash((shouldAdd?'선택 완료':'선택 해제')+' · 선택 메시지 '+selectedGroupCount()+'개');
+    return true;
   }
   window.addEventListener('message', event => {
     if (event.origin !== FRAME_ORIGIN || event.source !== chatFrame()?.contentWindow || event.data?.protocol !== PROTOCOL) return;
@@ -1375,8 +1397,8 @@
     if (!root) return;
     const scroller=root.getElementById('scroll'),position=scroller?.scrollTop;
     syncAutoChatAttachment();
-    const count = loaded.filter(item => chosen.has(item.id)).length;
-    root.getElementById('collected').textContent = `${loaded.length}개`;
+    const count = selectedGroupCount();
+    root.getElementById('collected').textContent = `${displayGroups().length}개`;
     root.getElementById('selected').textContent = `${count}개`;
     statusBox.textContent = currentInfo;
     root.getElementById('load').disabled = running;
@@ -1715,9 +1737,9 @@
     <summary>3. 대화 내용 첨부</summary>
     <div class="snapshot-chat-body">
      <div id="status" role="status"></div>
-     <div class="stats"><div class="stat"><small>불러온 원본 메시지</small><strong id="collected">0개</strong></div><div class="stat"><small>선택한 원본 메시지</small><strong id="selected">0개</strong></div></div>
+     <div class="stats"><div class="stat"><small>불러온 메시지</small><strong id="collected">0개</strong></div><div class="stat"><small>선택한 메시지</small><strong id="selected">0개</strong></div></div>
      <div class="row"><button id="load" class="primary" type="button">과거 대화 불러오기</button><button id="stop" type="button">중지</button></div>
-     <p class="note">원본 메시지 단위만 선택합니다. 말풍선을 누르면 전체 원본 메시지가 선택됩니다. 다시 누르면 해제됩니다.</p>
+     <p class="note">원본 메시지 단위로 선택합니다. API에서 isIntro: true인 인트로는 하나의 메시지로 묶으며 다시 누르면 선택이 해제됩니다.</p>
      <div class="row"><button id="start" class="primary" type="button">말풍선 직접 선택</button><button id="clear" type="button">선택 해제</button></div>
      <p id="summary" aria-live="polite">선택한 메시지가 없습니다.</p>
      <textarea id="preview" readonly aria-label="선택 대화 원문" placeholder="선택한 원본 메시지가 여기에 표시됩니다."></textarea>
@@ -1846,7 +1868,7 @@
       else if (document.referrer) origin = new URL(document.referrer).origin;
     } catch (_) { return; }
     if (!/^https:\/\/(?:[a-z0-9-]+\.)?zeta-ai\.io$/i.test(origin)) return;
-    let known = new Set(), selected = new Set(), enabled = false;
+    let known = new Set(), selected = new Set(), indices = new Map(), enabled = false;
     let highlight = null, scheduled = false, lastProfileSent = '', activeRoom = '';
     function selectedUserProfile() {
       const dialog = document.querySelector('[role="dialog"][aria-label="대화 프로필"]');
@@ -1907,7 +1929,7 @@
         highlight.style.cssText='position:fixed;inset:0;z-index:2147483600;pointer-events:none;overflow:hidden';
         document.body.appendChild(highlight);
       }
-      drawMessageOutlines(highlight,[...known],selected);
+      drawMessageOutlines(highlight,indices,selected);
     }
     function schedule() {
       if (scheduled) return;
@@ -1932,10 +1954,11 @@
         port.close();
       } else if (e.data.type === 'state') {
         const next = e.data.state;
-        if (!next || !Array.isArray(next.known) || !Array.isArray(next.chosen)) return;
-        enabled = next.enabled === true;
-        known = new Set(next.known.filter(s => typeof s === 'string'));
-        selected = new Set(next.chosen.filter(s => typeof s === 'string'));
+        if(!next || !(next.known instanceof Set) || !(next.indices instanceof Map) || !(next.selected instanceof Set))return;
+        enabled=next.enabled===true;
+        known=new Set([...next.known].filter(s=>typeof s==='string'));
+        indices=new Map([...next.indices].filter(([id,index])=>typeof id==='string'&&Number.isInteger(index)));
+        selected=new Set([...next.selected].filter(Number.isInteger));
         schedule();
       }
     });

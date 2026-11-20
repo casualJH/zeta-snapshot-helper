@@ -767,14 +767,14 @@
     const countPeople=selectedScenePeople().length;
     gen.disabled=!one&&((scene.mode==='2'&&countPeople!==2)||(scene.mode==='multi'&&countPeople<2));
     gen.textContent='프롬프트 생성';
-    const selectedCount=loaded.filter(x=>chosen.has(x.id)).length;
+    const selectedCount=selectedGroupCount();
     toggle.disabled=!selectedCount;
     root.getElementById('snapshot-template-note').hidden=true;
     toggle.setAttribute('aria-pressed',String(includeChat));
     toggle.textContent=includeChat?'대화 내용 첨부 해제':'대화 내용 다시 첨부';
     copy.disabled=!output.value.trim();
     renderSnapshotImageCopyButtons();
-    const count=loaded.filter(x=>chosen.has(x.id)).length;
+    const count=selectedGroupCount();
     label.textContent=includeChat?'선택 메시지 '+count+'개 · 자동 첨부됨':count?'선택 메시지 '+count+'개 · 첨부 해제됨':'';
   }
   function renderSnapshotImageCopyButtons(){
@@ -1270,14 +1270,14 @@
     finally {
       if (epoch !== generation) return;
       aborter = null; running = false;
-      setInfo(`대화 ${loaded.length}개 수집 · 원본 ${totalMessages}개 · ${pages}페이지 · ${complete ? '전체 수집 완료' : '부분 수집'}${note ? '\n' + note : ''}`);
+      setInfo(`대화 ${displayGroups().length}개 수집 · 원본 ${totalMessages}개 · ${pages}페이지 · ${complete ? '전체 수집 완료' : '부분 수집'}${note ? '\n' + note : ''}`);
     }
   }
   function stopLoad() {
     if (!running) return;
     generation++;
     aborter?.abort(); aborter = null; running = false;
-    setInfo(`불러오기가 중지되었습니다. 수집된 원본 ${loaded.length}개만 확인할 수 있습니다.`);
+    setInfo(`불러오기가 중지되었습니다. 수집된 메시지 ${displayGroups().length}개만 확인할 수 있습니다.`);
   }
 
   function chatFrame() {
